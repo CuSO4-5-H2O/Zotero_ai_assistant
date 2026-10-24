@@ -3,7 +3,7 @@ var ResearchNotebookDock = {
   create(owner, win, channel) {
     const doc=win.document,html=name=>doc.createElementNS('http://www.w3.org/1999/xhtml',name);
     const panel=html('section');panel.id='research-notebook-dock';panel.setAttribute('aria-label','科研笔记浮窗');
-    panel.style.cssText='position:fixed;z-index:2147483000;top:76px;right:22px;width:min(620px,calc(100vw - 32px));height:calc(100vh - 130px);min-width:340px;min-height:300px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);display:flex;flex-direction:column;resize:both;overflow:hidden;box-sizing:border-box;padding:0;margin:0;border:1px solid #d3e1dd;border-radius:12px;background:#fff;box-shadow:0 18px 70px #123c3c30;color:#284d47;';
+    panel.style.cssText='position:fixed;z-index:2147483000;top:76px;right:22px;width:min(620px,calc(100vw - 32px));height:calc(100vh - 130px);min-width:340px;min-height:300px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;padding:0;margin:0;border:1px solid #d3e1dd;border-radius:12px;background:#fff;box-shadow:0 18px 70px #123c3c30;color:#284d47;';
     const handle=html('header');handle.style.cssText='display:flex;align-items:center;gap:12px;flex:none;min-height:34px;padding:4px 12px;background:#edf4f1;cursor:move;font:12px system-ui;user-select:none;';
     const label=html('span');label.textContent='科研笔记';label.style.flex='1';
     const resize=html('button');resize.textContent='⇔';resize.title='切换宽度';resize.style.cssText='border:0;background:transparent;color:inherit;cursor:pointer;';

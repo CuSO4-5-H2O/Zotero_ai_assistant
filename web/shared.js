@@ -135,7 +135,10 @@ window.ResearchUI = (() => {
       const excerpt=result.selection.text.slice(0,30).replace(/[\r\n]/g,' ');
       const title=(selectionMode==='summary'?'选文总结 · ':'翻译笔记 · ')+new Date().toLocaleDateString('zh-CN').replaceAll('/','-')+' · '+excerpt;
       const content='# '+title+'\n\n来源：'+result.selection.source+(result.selection.paper?' · ['+result.selection.paper+'](/paper/'+result.selection.paper+')':'')+'\n\n## 原文\n\n'+result.selection.text+'\n\n## '+(selectionMode==='summary'?'总结':'译文（'+result.target+'）')+'\n\n'+result.text+'\n\n> DeepSeek '+result.model+' 辅助翻译，请对照原文。\n';
-      await api('/api/notes',{title,folder:'文献笔记',tags:['翻译',...(result.selection.paper?[result.selection.paper]:[])],content});
+      const pid=result.selection.paper||document.body.dataset.paper,nid=document.body.dataset.note;
+      if(pid){const doc=await api('/api/papers/'+pid);await api('/api/papers/'+pid+'/reading',{version:doc.reading.version,content:doc.reading.content.trimEnd()+'\n\n'+content});document.dispatchEvent(new CustomEvent('research-chat-saved',{detail:{paper_id:pid}}));}
+      else if(nid){const doc=await api('/api/notes/'+nid);await api('/api/notes/'+nid,{...doc,content:doc.content.trimEnd()+'\n\n'+content});}
+      else throw new Error('请先打开目标文献笔记，再加入选文；不会自动新建笔记');
       $('save-translation').textContent='已保存';window.dispatchEvent(new Event('research-notes-changed'));
     }catch(error){showError(error.message);button.disabled=false;}
   };

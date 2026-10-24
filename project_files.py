@@ -1,5 +1,5 @@
 """Versioned text-file operations inside a user-selected project directory."""
-import hashlib,json,os,re,threading,time,uuid
+import base64,hashlib,json,os,re,threading,time,uuid
 from pathlib import Path
 
 EXT={'.md','.txt','.csv','.json','.yaml','.yml','.toml','.py','.js','.ts','.jsx','.tsx','.html','.css','.m','.tex','.bib','.xml','.svg','.ini'}
@@ -51,6 +51,20 @@ class ProjectSession:
                 rows.append({'path':rel,'bytes':p.stat().st_size,'editable':p.suffix.lower() in EXT})
                 if len(rows)>=150:return {'files':rows,'limited':True}
         return {'files':rows,'limited':False}
+    def import_file(self,path,encoded):
+        p=self.path(path)
+        if p.suffix.lower() in {'.exe','.dll','.com','.bat','.cmd','.ps1','.lnk','.url'}:raise ValueError('工程仓库不导入可执行程序或系统快捷方式')
+        if not isinstance(encoded,str) or len(encoded)>28_000_000:raise ValueError('单个导入文件最大 20MB')
+        try:raw=base64.b64decode(encoded,validate=True)
+        except ValueError:raise ValueError('文件数据无效') from None
+        if len(raw)>20_000_000:raise ValueError('单个导入文件最大 20MB')
+        with self.owner.lock:
+            p.parent.mkdir(parents=True,exist_ok=True)
+            try:
+                with p.open('xb') as file:file.write(raw)
+            except FileExistsError:raise ValueError('同名文件已存在，未覆盖；请更名后导入') from None
+        return {'ok':True,'path':p.relative_to(self.root).as_posix(),'bytes':len(raw)}
+
     def read(self,path):
         p=self.path(path,True)
         if p.stat().st_size>500000:raise ValueError('文本文件超过500KB，请缩小文件后处理')

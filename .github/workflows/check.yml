@@ -20,5 +20,7 @@ jobs:
             node --check $_.FullName
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Test content separation and operations
+        run: python -m unittest discover -s tests
       - run: python tools/bootstrap.py --assets-only
       - run: python build_zotero_plugin.py

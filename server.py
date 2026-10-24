@@ -32,7 +32,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / 'resources'
-DEFAULT_FOLDERS = ['调研报告', '文献笔记', '课题想法', '实验记录', '我的笔记']
+DEFAULT_FOLDERS = [ '文献笔记', '课题想法', '实验记录', '我的笔记']
 PAPER_ID_RE = r'(?:[A-D]\d{1,2}|Z\d+_[A-Z0-9]{8})'
 
 
@@ -63,7 +63,7 @@ class Conflict(Exception):
 
 class Vault:
     def __init__(self, root: Path, seed=True):
-        self.root = root.resolve()
+        self.root = root.resolve();self.category='notes'
         self.root.mkdir(parents=True, exist_ok=True)
         self.index = self.root / 'index.json'
         self.lock = threading.RLock()
@@ -123,6 +123,7 @@ class Vault:
     def create(self, title, folder, tags, content, source=''):
         with self.lock:
             title, folder = safe_name(title), safe_name(folder)
+            if self.category=='notes' and folder=='调研报告':raise ValueError('报告请放入独立报告区')
             if not isinstance(tags, list) or len(tags) > 30 or not isinstance(content, str) or len(content) > 2_000_000:
                 raise ValueError('笔记内容或标签不合法')
             data = self.read_index()
@@ -150,6 +151,7 @@ class Vault:
             if payload.get('version') != current['version']:
                 raise Conflict('文件已被其他窗口或外部软件修改。当前草稿已保留，请重新载入后比较。')
             title, folder = safe_name(payload['title']), safe_name(payload['folder'])
+            if self.category=='notes' and folder=='调研报告':raise ValueError('报告请放入独立报告区')
             tags, content = payload.get('tags', []), payload['content']
             if not isinstance(content, str) or len(content) > 2_000_000 or not isinstance(tags, list) or len(tags) > 30:
                 raise ValueError('笔记过大或标签不合法')
@@ -226,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 14})
+        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 15})
         if path.path == '/auth/callback':
             import html
             try:message=self.server.chatgpt.callback({k:v[0] for k,v in parse_qs(path.query).items()});status=200
@@ -251,6 +253,15 @@ class Handler(BaseHTTPRequestHandler):
             if path.path == '/api/ai/settings':return self.js(self.server.ai.public())
             if path.path == '/api/ai/catalog':return self.js(self.server.ai.catalog(refresh=parse_qs(path.query).get('refresh')==['1']))
             if path.path == '/api/ai/models':return self.js({'models':self.server.chatgpt.models(refresh=parse_qs(path.query).get('refresh')==['1'])})
+            if path.path == '/api/projects/asset':
+                rel=parse_qs(path.query).get('path',[''])[0];file=self.server.projects.bind().path(rel)
+                if not file.is_file():raise ValueError('文件不存在')
+                mime=mimetypes.guess_type(file.name)[0] or 'application/octet-stream'
+                inline=file.suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp','.bmp'}
+                self.send_response(200);self.send_header('Content-Type',mime if inline else 'application/octet-stream');self.send_header('Content-Length',str(file.stat().st_size));self.send_header('Content-Disposition','inline' if inline else 'attachment');self.send_header('X-Content-Type-Options','nosniff');self.end_headers()
+                with file.open('rb') as content:
+                    while block:=content.read(65536):self.wfile.write(block)
+                return
             if path.path == '/api/projects/settings':return self.js(self.server.projects.settings())
             if path.path == '/api/projects/files':return self.js(self.server.projects.bind().list(parse_qs(path.query).get('q',[''])[0]))
             if path.path == '/api/workspace/chat':return self.js(self.server.workspace_chat.get('workspace'))
@@ -273,6 +284,17 @@ class Handler(BaseHTTPRequestHandler):
                     if not pdf: return self.js({'error':'尚未收录这篇文献的 PDF'},404)
                     return self.send_bytes(pdf.read_bytes(),'application/pdf',extra={'Content-Disposition':'inline; filename="'+pid+'.pdf"'})
                 return self.js(self.server.papers.get(pid))
+            if path.path == '/api/reports':
+                q=parse_qs(path.query);return self.js(self.server.reports.list(q.get('q',[''])[0],trash=q.get('trash',['0'])[0]=='1'))
+            report_match=re.fullmatch(r'/api/reports/([a-f0-9]{32})(?:/(history)(?:/([\d_]+))?)?',path.path)
+            if report_match:
+                nid,history,key=report_match.groups();return self.js(self.server.reports.historical(nid,key) if key else self.server.reports.history(nid) if history else self.server.reports.get(nid))
+            if path.path == '/api/paper-notes':
+                rows=[];query=parse_qs(path.query).get('q',[''])[0].casefold()
+                for pid,ref in self.server.papers.refs.items():
+                    path_note=self.server.papers.folder(pid)/'reading.md'
+                    if path_note.exists() and path_note.stat().st_size and (not query or query in (pid+' '+ref['title']+' '+path_note.read_text('utf-8')).casefold()):rows.append({'id':pid,'title':ref['title'],'updated':path_note.stat().st_mtime})
+                return self.js(sorted(rows,key=lambda x:x['updated'],reverse=True))
             if path.path == '/api/notes':
                 q = parse_qs(path.query)
                 return self.js(self.server.vault.list(q.get('q', [''])[0], q.get('folder', [''])[0], q.get('trash', ['0'])[0] == '1'))
@@ -354,6 +376,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.js({'ok':True,'message':'已打开 OpenAI 官方登录页，请完成登录和授权'})
             if self.path == '/api/ai/account':return self.js(self.server.chatgpt.select(payload.get('account')))
             if self.path == '/api/ai/logout':return self.js(self.server.chatgpt.logout(payload.get('account')))
+            if self.path == '/api/projects/import':return self.js(self.server.projects.bind().import_file(payload.get('path'),payload.get('data')))
+            archive=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/chat/archive',self.path)
+            if archive or self.path=='/api/workspace/chat/archive':return self.js((self.server.chat if archive else self.server.workspace_chat).archive(archive[1] if archive else 'workspace',payload))
             if self.path == '/api/projects/settings':return self.js(self.server.projects.set_root(payload.get('root')))
             if self.path == '/api/projects/read':return self.js(self.server.projects.bind().read(payload.get('path')))
             if self.path == '/api/workspace/note-actions/restore':return self.js(self.server.workspace_chat.restore_action('workspace',payload.get('action_id')))
@@ -413,7 +438,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(content, str) or len(content) > 2_000_000: raise ValueError('内容过大')
                 with self.server.vault.lock:
                     mapping = {Path(n.get('source') or n['file']).name: n['id'] for n in self.server.vault.read_index()['notes'] if not n.get('trashed')}
+                with self.server.reports.lock:
+                    mapping.update({Path(n.get('source') or n['file']).name:'report:'+n['id'] for n in self.server.reports.read_index()['notes'] if not n.get('trashed')})
                 return self.js({'html': render_markdown(content, mapping)})
+            report_edit=re.fullmatch(r'/api/reports/([a-f0-9]{32})',self.path)
+            if report_edit:return self.js(self.server.reports.save(report_edit[1],payload))
+            guide_edit=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/guide',self.path)
+            if guide_edit:return self.js(self.server.papers.save_guide(guide_edit[1],payload))
             if self.path == '/api/notes': return self.js(self.server.vault.create(payload['title'], payload.get('folder', '我的笔记'), payload.get('tags', []), payload.get('content', '')), 201)
             match = re.fullmatch(r'/api/notes/([a-f0-9]{32})(?:/(trash|restore))?', self.path)
             if not match: return self.js({'error': '操作不存在'}, 404)
@@ -438,9 +469,12 @@ def main():
     previous = json.loads(args.state.read_text(encoding='utf-8')) if args.resume and args.state.exists() else {}
     server = ThreadingHTTPServer(('127.0.0.1', previous.get('port',0)), Handler)
     server.daemon_threads = True
-    server.vault = Vault(args.vault)
+    server.vault = Vault(args.vault,seed=False)
+    server.reports = Vault(args.vault.parent/'reports',seed=False);server.reports.category='reports'
     server.key = previous.get('key') or secrets.token_urlsafe(32)
     server.papers = PaperLibrary(args.vault/'.papers', SOURCE, atomic, Conflict, render_markdown)
+    from content_layout import separate
+    separate(server.vault,server.reports,server.papers,atomic,args.config/'migrations'/'layout-v1')
     markdown_view.CATALOG = server.papers.refs
     server.deepseek = DeepSeek(ROOT/'.runtime'/'deepseek.json',atomic)
     args.config.mkdir(parents=True,exist_ok=True)

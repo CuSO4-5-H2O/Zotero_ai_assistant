@@ -59,7 +59,7 @@ function populate(doc) {
 async function openNote(id) {
   if(!await persist())return;
   clearTimeout(saveTimer);clearTimeout(previewTimer);state.previewRun++;
-  try {const doc=await api('/api/notes/'+id);populate(doc);$('preview').scrollTop=0;$('editor').scrollTop=0;document.querySelector('.workspace').classList.remove('show-list');
+  try {const doc=await api('/api/notes/'+id);populate(doc);document.body.dataset.note=id;$('preview').scrollTop=0;$('editor').scrollTop=0;document.querySelector('.workspace').classList.remove('show-list');
     const cached=localStorage.getItem('draft:'+id);if(cached){const draft=JSON.parse(cached);if(draft.version===doc.version&&draft.content!==doc.content){$('note-title').value=draft.title;$('note-tags').value=draft.tags.join(', ');$('note-folder').value=draft.folder;$('editor').value=draft.content;setMode('edit');changed();toast('已恢复上次未保存的草稿');}}
   } catch(error) {status(error.message,'error');toast(error.message);}
 }
@@ -100,7 +100,7 @@ $('editor').oninput=changed;$('note-tags').oninput=changed;$('note-folder').onch
 $('note-title').oninput=()=>{const first=$('editor').value.split('\n')[0];if(first==='# '+state.previousTitle)$('editor').value='# '+$('note-title').value+$('editor').value.slice(first.length);state.previousTitle=$('note-title').value;changed();};
 $('save').onclick=async()=>{if(await persist(true))toast('已保存');};
 $('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>refresh().catch(e=>toast(e.message)),180);};
-$('preview').onclick=event=>{const link=event.target.closest('[data-open]');if(link){event.preventDefault();openNote(link.dataset.open);}};
+$('preview').onclick=event=>{const link=event.target.closest('[data-open]');if(link){event.preventDefault();if(link.dataset.open.startsWith('report:'))location.href='/dock?pane=reports';else openNote(link.dataset.open);}};
 window.addEventListener('research-notes-changed',()=>refresh().catch(e=>toast(e.message)));
 window.addEventListener('focus',()=>refresh().catch(()=>{}));
 $('export-vault').onclick=async()=>{if(!await persist())return;const a=document.createElement('a');a.href='/api/export';a.download='科研笔记仓库.zip';a.click();};

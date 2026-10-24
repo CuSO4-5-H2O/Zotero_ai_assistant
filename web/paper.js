@@ -55,14 +55,14 @@ p$('save-reading').onclick=saveReading;
 p$('generate-reading').onclick=async()=>{
   if(generationRun)return;
   if(dirtyReading&&!await saveReading())return;
-  generationRun=true;const button=p$('generate-reading');button.disabled=true;p$('reading-status').textContent='正在基于全文生成精读，请稍候…';
+  generationRun=true;const button=p$('generate-reading');button.disabled=true;p$('reading-status').textContent='正在基于全文生成独立导读，请稍候…';
   try {const data=await pApi('/api/papers/'+paperId+'/analyze',{});
-    const current=p$('reading-editor').value.trim();
-    p$('reading-editor').value=(current?current+'\n\n---\n\n':'')+data.text;dirtyReading=true;
-    const preview=await pApi('/api/preview',{content:p$('reading-editor').value});p$('paper-reading').innerHTML=preview.html;pMath(p$('paper-reading'));modeReading(false);p$('save-reading').hidden=false;
-    p$('reading-status').textContent='AI 精读草稿已生成，请核对后点击“保存笔记”'+(data.truncated?'；输出达到上限，内容可能不完整':'');
+    if(data.truncated)throw new Error('导读未完整生成，未覆盖现有导读');
+    const saved=await pApi('/api/papers/'+paperId+'/guide',{version:paper.guide_version,content:data.text});paper.guide_version=saved.version;
+    p$('paper-guide').innerHTML=saved.html;pMath(p$('paper-guide'));await showTab('guide');
+    p$('reading-status').textContent='导读已单独保存，个人文献笔记未改动';
   }catch(error){p$('reading-status').textContent=error.message;}finally{button.disabled=false;generationRun=false;}
 };
 window.addEventListener('keydown',event=>{if(event.ctrlKey&&event.key.toLowerCase()==='s'){event.preventDefault();saveReading();}});
 window.addEventListener('beforeunload',event=>{if(dirtyReading){event.preventDefault();event.returnValue='';}});
-(async()=>{try {paper=await pApi('/api/papers/'+paperId);p$('paper-id').textContent=paperId+(new URLSearchParams(location.search).get('host')==='zotero'?' / Zotero 文献精读':' / 独立精读窗口');p$('paper-title').textContent=paper.title;p$('paper-meta').textContent=paper.author+' · '+paper.year+' · '+paper.venue;p$('paper-badges').textContent=paper.type+'　·　'+(paper.has_pdf?(paper.pdf_source||'已有本地 PDF'):'全文待导入');p$('paper-original').href=paper.url;p$('paper-original').hidden=!/^https?:/.test(paper.url||'');p$('paper-pdf').href='/api/papers/'+paperId+'/pdf';p$('paper-pdf').hidden=!paper.has_pdf;if(paper.zotero){p$('import-pdf').hidden=true;p$('pdf-help').textContent='PDF 由 Zotero 管理，本页直接读取现有附件。选中文字后自动翻译，生成 AI 精读需单独点击。';p$('paper-pdf').textContent='在 Zotero 中打开 PDF ↗';p$('paper-pdf').href='zotero://open-pdf/library/items/'+paper.zotero.attachment_key;p$('pdf-status').textContent='直接使用 Zotero storage 附件';}p$('paper-guide').innerHTML=paper.guide_html;setReading(paper.reading);if(!paper.reading.content)p$('paper-reading').textContent='尚无精读笔记。可以自行记录，或在导入全文并配置 DeepSeek 后生成。';document.title=paperId+' · '+paper.title+' · 文献精读';pMath(p$('paper-guide'));}catch(error){p$('paper-title').textContent=error.message;}})();
+(async()=>{try {paper=await pApi('/api/papers/'+paperId);p$('paper-id').textContent=paperId+(new URLSearchParams(location.search).get('host')==='zotero'?' / Zotero 文献精读':' / 独立精读窗口');p$('paper-title').textContent=paper.title;p$('paper-meta').textContent=paper.author+' · '+paper.year+' · '+paper.venue;p$('paper-badges').textContent=paper.type+'　·　'+(paper.has_pdf?(paper.pdf_source||'已有本地 PDF'):'全文待导入');p$('paper-original').href=paper.url;p$('paper-original').hidden=!/^https?:/.test(paper.url||'');p$('paper-pdf').href='/api/papers/'+paperId+'/pdf';p$('paper-pdf').hidden=!paper.has_pdf;if(paper.zotero){p$('import-pdf').hidden=true;p$('pdf-help').textContent='PDF 由 Zotero 管理，本页直接读取现有附件。选中文字后自动翻译，生成 AI 精读需单独点击。';p$('paper-pdf').textContent='在 Zotero 中打开 PDF ↗';p$('paper-pdf').href='zotero://open-pdf/library/items/'+paper.zotero.attachment_key;p$('pdf-status').textContent='直接使用 Zotero storage 附件';}p$('paper-guide').innerHTML=paper.guide_html;setReading(paper.reading);if(!paper.reading.content)p$('paper-reading').textContent='尚无文献笔记。可以在这里自行记录；AI 生成的导读会单独存放。';document.title=paperId+' · '+paper.title+' · 文献精读';pMath(p$('paper-guide'));}catch(error){p$('paper-title').textContent=error.message;}})();

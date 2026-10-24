@@ -30,17 +30,18 @@ class NoteTools:
     def logs(self):return json.loads(self.logpath.read_text(encoding='utf-8')) if self.logpath.exists() else []
     def log(self,record):
         rows=self.logs();rows.append(record);self.atomic(self.logpath,json.dumps(rows,ensure_ascii=False))
-    def marker(self):return self.papers.folder(self.pid)/'reading-trash.json'
+    def marker(self,pid=None):return self.papers.folder(pid or self.pid)/'reading-trash.json'
     def canonical(self,nid):
         if nid in {'current_paper','paper:'+self.pid}:return 'paper:'+self.pid
+        if isinstance(nid,str) and nid.startswith('paper:') and nid[6:] in getattr(self.papers,'refs',{}):return nid
         if not isinstance(nid,str) or not re.fullmatch('[a-f0-9]{32}',nid):raise ValueError('笔记 ID 不合法；请先搜索目标笔记')
         return nid
     def read(self,nid):
         nid=self.canonical(nid)
         if nid.startswith('paper:'):
-            reading=self.papers.reading(self.pid)
+            pid=nid[6:];reading=self.papers.reading(pid)
             result={k:reading[k] for k in ['content','version']}
-            result.update(id=nid,title='精读笔记 · '+self.pid,kind='paper',trashed=self.marker().exists() and not reading['content'])
+            result.update(id=nid,title='文献笔记 · '+pid,kind='paper',trashed=self.marker(pid).exists() and not reading['content'])
         else:
             result=self.vault.get(nid)
             result={k:result[k] for k in ['id','title','folder','tags','content','version','trashed']}
@@ -71,7 +72,13 @@ class NoteTools:
                 if not isinstance(query,str) or len(query)>300 or type(trash)!=bool:raise ValueError('检索参数无效')
                 rows=self.vault.list(query,trash=trash)['notes']
                 result={'ok':True,'notes':[{k:r[k] for k in ['id','title','folder','tags','excerpt']} for r in rows[:30]],'total':len(rows),'current_paper_note_id':'current_paper'}
-                if len(rows)==1 and rows[0]['characters']<=12000:result['note']=self.read(rows[0]['id'])
+                for pid,ref in getattr(self.papers,'refs',{}).items():
+                    reading=self.papers.reading(pid);deleted=self.marker(pid).exists() and not reading['content']
+                    if deleted!=trash or not (reading['content'] or deleted):continue
+                    if query.casefold() not in (pid+' '+ref['title']+' '+reading['content']).casefold():continue
+                    result['notes'].append({'id':'paper:'+pid,'title':ref['title'],'folder':'本文献笔记','tags':[pid],'excerpt':reading['content'][:180]})
+                result['total']=len(result['notes']);result['notes']=result['notes'][:30]
+                if result['total']==1:result['note']=self.read(result['notes'][0]['id'])
                 return result
             if name=='read_note':return {'ok':True,'note':self.read(args['note_id'])}
             if self.writes>=8:raise ValueError('本轮最多写入8次，请分批处理笔记')
@@ -86,20 +93,20 @@ class NoteTools:
                 result=self.vault.create(args['title'],args.get('folder','文献笔记'),args.get('tags',[self.pid]),args['content'])
             elif nid.startswith('paper:'):
                 with self.papers.lock:
-                    current=self.papers.reading(self.pid)
+                    pid=nid[6:];current=self.papers.reading(pid)
                     if current['version']!=doc['version']:raise ValueError('精读笔记已被其他窗口修改，请重新读取后操作')
                     if name=='update_note':
                         if any(k in args for k in ['title','folder','tags']):raise ValueError('当前论文精读仅支持编辑正文；分类笔记可在仓库中修改')
                         if doc.get('trashed'):raise ValueError('请先恢复已删除的精读笔记')
-                        result=self.papers.save_reading(self.pid,{'version':doc['version'],'content':args.get('content',doc['content'])})
+                        result=self.papers.save_reading(pid,{'version':doc['version'],'content':args.get('content',doc['content'])})
                     elif name=='delete_note':
                         if doc.get('trashed'):raise ValueError('精读笔记已在回收记录中')
-                        self.atomic(self.marker(),json.dumps({'content':current['content'],'before_version':doc['version']},ensure_ascii=False))
-                        result=self.papers.save_reading(self.pid,{'version':doc['version'],'content':''})
+                        self.atomic(self.marker(pid),json.dumps({'content':current['content'],'before_version':doc['version']},ensure_ascii=False))
+                        result=self.papers.save_reading(pid,{'version':doc['version'],'content':''})
                     else:
                         if not doc.get('trashed'):raise ValueError('这篇精读笔记未被删除，无需恢复')
-                        previous=json.loads(self.marker().read_text(encoding='utf-8'))
-                        result=self.papers.save_reading(self.pid,{'version':doc['version'],'content':previous['content']});self.marker().unlink()
+                        previous=json.loads(self.marker(pid).read_text(encoding='utf-8'))
+                        result=self.papers.save_reading(pid,{'version':doc['version'],'content':previous['content']});self.marker(pid).unlink()
                     result={**result,'id':nid,'title':doc['title']}
             else:
                 with self.vault.lock:

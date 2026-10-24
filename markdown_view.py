@@ -37,7 +37,7 @@ def render_markdown(text, mapping=None):
     md.inline.ruler.before('escape','math_inline_display',inline_display)
     md.renderer.rules['math_inline_display']=lambda ts,i,*_: '<span class="math-display">'+html.escape(ts[i].content)+'</span>'
     tokens = md.parse(text)
-    byurl = {x['url'].rstrip('/').lower(): x['id'] for x in CATALOG.values()}
+    byurl = {x.get('url','').rstrip('/').lower(): x['id'] for x in CATALOG.values() if x.get('url')}
     anchors = {}
     for index, token in enumerate(tokens):
         if token.type == 'heading_open' and index+1<len(tokens):

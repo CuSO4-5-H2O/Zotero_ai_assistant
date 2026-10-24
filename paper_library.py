@@ -48,9 +48,22 @@ class PaperLibrary:
         return None
 
     def guide(self, pid):
+        saved=self.folder(pid)/'guide.md'
+        if saved.exists():return saved.read_text(encoding='utf-8')
         r=self.item(pid)
         return ('# '+r['title']+'\n\n'+ ' · '.join(str(r.get(k,'')) for k in ['author','year','venue'] if r.get(k))+
                 '\n\n## 阅读提示\n\n记录研究问题、关键方法、主要证据与局限。\n\n> 关联 PDF 不代表已经完成精读。AI 输出请对照原文和页码核对。\n')
+
+    def save_guide(self,pid,payload):
+        with self.lock:
+            current=self.guide(pid);version=hashlib.sha256(current.encode()).hexdigest()
+            if payload.get('version')!=version:raise self.conflict('导读已更新，请重新载入')
+            content=payload.get('content')
+            if not isinstance(content,str) or len(content)>200000:raise ValueError('导读内容过长')
+            import time
+            self.atomic(self.folder(pid)/'guide-history'/(str(time.time_ns())+'.md'),current)
+            self.atomic(self.folder(pid)/'guide.md',content)
+            return {'content':content,'version':hashlib.sha256(content.encode()).hexdigest(),'html':self.render(content)}
 
     def reading(self, pid):
         path = self.folder(pid)/'reading.md'
@@ -60,7 +73,7 @@ class PaperLibrary:
     def get(self, pid):
         r = self.item(pid)
         guide = self.guide(pid)
-        return {**r,'guide':guide,'guide_html':self.render(guide),'has_pdf':bool(self.pdf(pid)), 'reading':self.reading(pid),'pdf_source':'Zotero storage' if r.get('zotero') else '本地 PDF'}
+        return {**r,'guide':guide,'guide_html':self.render(guide),'guide_version':hashlib.sha256(guide.encode()).hexdigest(),'has_pdf':bool(self.pdf(pid)), 'reading':self.reading(pid),'pdf_source':'Zotero storage' if r.get('zotero') else '本地 PDF'}
 
     def pages(self, pid):
         with self.lock:
