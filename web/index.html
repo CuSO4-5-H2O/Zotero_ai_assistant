@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>科研笔记仓库</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/reader.css"><link rel="stylesheet" href="/vendor/katex/katex.min.css"><script defer src="/vendor/katex/katex.min.js"></script><script defer src="/shared.js"></script><script defer src="/ai-settings.js"></script><script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="workspace">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="科研笔记仓库首页"><span class="brand-icon">研</span><span>科研笔记仓库<small>记录 · 连接 · 推进</small></span></a>
+      <button id="new-note" class="primary"><span>＋</span> 新建笔记 <kbd>Ctrl Alt N</kbd></button>
+      <div class="nav-heading">我的仓库</div><nav id="folders" aria-label="笔记分类"></nav>
+      <button id="new-folder" class="subtle add-folder">＋ 新建分类</button>
+      <div class="sidebar-bottom"><button data-deepseek-settings class="subtle">◇ DeepSeek 设置</button><button id="export-vault" class="subtle">↗ 导出仓库</button><button id="vault-location" class="subtle">⌂ 仓库位置</button><span class="local-label"><i></i> 本地文件</span></div>
+    </aside>
+    <section class="library" aria-label="文档列表">
+      <header class="list-header"><div><h1 id="list-title">全部文档</h1><span id="list-count"></span></div><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜索标题、标签或正文" aria-label="搜索笔记"><kbd>Ctrl K</kbd></label></header>
+      <div id="note-list" class="note-list"></div>
+      <div class="list-footer">Markdown 笔记，自由积累与整理</div>
+    </section>
+    <main class="document" aria-label="文档工作区">
+      <header class="toolbar"><div id="breadcrumb">科研笔记仓库</div><div class="toolbar-right"><div class="modes" role="group" aria-label="显示模式"><button data-mode="read" aria-pressed="true">阅读</button><button data-mode="edit" aria-pressed="false">编辑</button><button data-mode="split" aria-pressed="false">分栏</button></div><button id="history" class="tool-button" title="查看历史版本">历史</button><button id="trash-note" class="tool-button" title="移入回收站">回收站</button><button id="save" class="save-button">保存 <kbd>Ctrl S</kbd></button></div></header>
+      <div id="empty-document" class="empty-document"><span class="empty-mark">▤</span><h2>让想法有处可归</h2><p>创建第一篇笔记，或从 Zotero 关联一篇论文。</p><button id="empty-new" class="primary">新建笔记</button></div>
+      <div id="document-body" hidden>
+        <div class="document-heading"><input id="note-title" aria-label="笔记标题" placeholder="笔记标题" readonly><div class="note-meta"><label>分类 <select id="note-folder" aria-label="笔记分类" disabled></select></label><label class="tags-label">标签 <input id="note-tags" aria-label="笔记标签" placeholder="用逗号分隔" readonly></label></div></div>
+        <div id="panes" class="panes read"><section class="editor-pane"><div class="pane-label">MARKDOWN</div><textarea id="editor" aria-label="Markdown 编辑器" spellcheck="false" placeholder="从一个问题、一篇论文或一个想法开始……"></textarea></section><section class="preview-pane"><div class="pane-label">阅读预览</div><article id="preview" class="prose"></article></section></div>
+      </div>
+      <footer class="statusbar"><span id="save-status" role="status">正在打开仓库…</span><span id="word-count"></span></footer>
+    </main>
+  </div>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="new-dialog"><form id="new-form"><header><h2>新建笔记</h2><button class="dialog-close" type="button" data-close="new-dialog" aria-label="关闭">×</button></header><label>标题<input id="new-title" required maxlength="100" placeholder="给这个想法起个名字" autocomplete="off"></label><div class="form-row"><label>分类<select id="new-category"></select></label><label>模板<select id="new-template"><option value="blank">空白笔记</option><option value="paper">文献阅读</option><option value="idea">课题想法</option><option value="experiment">实验记录</option></select></label></div><label>标签<input id="new-tags" placeholder="例如：待读, 实验方法"></label><footer><button type="button" class="secondary" data-close="new-dialog">取消</button><button type="submit" class="primary">创建笔记</button></footer></form></dialog>
+  <dialog id="folder-dialog"><form id="folder-form"><header><h2>新建分类</h2><button type="button" class="dialog-close" data-close="folder-dialog" aria-label="关闭">×</button></header><label>分类名称<input id="folder-name" required maxlength="60" placeholder="例如：电磁工程数学"></label><footer><button type="button" class="secondary" data-close="folder-dialog">取消</button><button type="submit" class="primary">创建分类</button></footer></form></dialog>
+  <dialog id="history-dialog" class="history-dialog"><header><h2>历史版本</h2><button class="dialog-close" type="button" data-close="history-dialog" aria-label="关闭">×</button></header><p class="muted">保存前保留旧版本。恢复后，当前内容也会留存。</p><div id="history-list"></div></dialog>
+  <dialog id="info-dialog"><header><h2>你的科研笔记仓库</h2><button class="dialog-close" type="button" data-close="info-dialog" aria-label="关闭">×</button></header><p>报告和笔记都保存为本地 Markdown 文件。</p><code id="vault-path"></code><p class="muted">“导出仓库”会打包笔记、分类索引和历史版本，方便备份或迁移。原调研报告保留在原位置，仓库内是可编辑副本。</p><p class="muted">快捷键：Ctrl S 保存 · Ctrl K 搜索 · Ctrl Alt N 新建</p></dialog>
+</body>
+</html>

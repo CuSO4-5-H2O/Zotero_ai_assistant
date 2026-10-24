@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>科研笔记 · 阅读浮窗</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/reader.css"><link rel="stylesheet" href="/dock.css"><link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<script defer src="/vendor/katex/katex.min.js"></script><script defer src="/shared.js"></script><script defer src="/ai-settings.js"></script><script defer src="/dock.js"></script><script defer src="/chat.js"></script></head>
+<body class="notebook-dock">
+<header class="dock-top"><div><span class="dock-eyebrow">RESEARCH NOTEBOOK</span><h1>科研笔记</h1></div><button data-deepseek-settings title="DeepSeek 设置" class="quiet">设置</button></header>
+<nav class="dock-tabs" aria-label="浮窗工作区"><button data-pane="current" aria-selected="true">当前论文</button><button data-pane="assistant" aria-selected="false">✧ AI 助手</button><button data-pane="notes" aria-selected="false">仓库笔记</button><button data-pane="papers" aria-selected="false">文献搜索</button><button data-pane="projects" aria-selected="false">工程文件</button><button data-pane="reports" aria-selected="false">已有报告</button></nav>
+<main>
+<section id="paper-context"><div class="context-label"><span id="context-badge">选择文献</span><button id="open-pdf" class="quiet" hidden>回到 PDF ↗</button></div><h2 id="context-title">从 PDF 点击「科研精读」开始</h2><p id="context-meta"></p></section>
+<section id="chat-workspace" hidden aria-label="PDF AI 助手">
+<div class="chat-heading"><h2 id="chat-heading-title">科研助手</h2><button id="reload-chat" class="quiet">重新载入</button></div>
+<p class="chat-permissions">笔记管理 · 工程文件 · 文献标签</p>
+<div class="assistant-model-row"><span id="chat-provider">正在载入 AI 服务…</span><button data-deepseek-settings class="quiet">切换服务 / 模型</button></div><details class="chat-help"><summary>助手能做什么</summary><p class="small">阅读当前 PDF 并标注页码；新建、编辑和追加笔记；为 Zotero 论文添加标签；读取和修改所选工程中的文本或代码。删除可恢复，修改保留历史。PDF 图表图像暂不参与问答。</p></details>
+<div class="chat-suggestions"><button data-question="这篇论文的关键创新是什么？请结合方法与证据解释。">关键创新</button><button data-question="请解释论文核心方法的工作机制，并说明每个主要步骤的作用。">解释方法</button><button data-question="这篇论文的实验支持了哪些结论，有哪些局限和可延伸的问题？">证据与局限</button></div>
+<div id="chat-messages" class="chat-messages" aria-label="论文问答记录"></div>
+<details id="note-actions" class="note-actions" hidden open><summary>操作记录</summary><div id="note-action-list"></div></details>
+<form id="chat-form"><label for="chat-question">交给助手处理</label><textarea id="chat-question" maxlength="4000" rows="3" placeholder="例如：论文的核心方法解决了什么问题？" required></textarea><div class="chat-send-row"><span class="small">使用所选 AI 服务 · Ctrl + Enter 发送</span><button id="stop-chat" type="button" class="quiet" hidden>停止</button><button id="send-chat" class="accent" type="submit">发送问题</button></div></form>
+<p id="chat-status" role="status" class="small"></p>
+</section>
+<section id="notes-search" class="search-section" hidden><div class="search-row"><input id="note-query" type="search" aria-label="搜索仓库笔记" placeholder="搜索标题、标签、正文"><button id="trash-notes" class="quiet" aria-pressed="false">回收站</button><button id="new-note" class="accent">＋ 新建</button></div><div id="notes-results" class="result-list"></div></section>
+<section id="papers-search" class="search-section" hidden><div class="search-row"><input id="paper-query" type="search" aria-label="搜索仓库文献" placeholder="题名、作者、编号或 DOI"><button id="refresh-papers" class="quiet">刷新</button></div><p id="papers-count" class="small"></p><div id="papers-results" class="result-list"></div></section>
+<section id="projects-search" class="search-section" hidden><div class="search-row"><input id="project-query" type="search" placeholder="按文件名搜索" aria-label="搜索工程文件"><button id="project-settings-button" class="quiet">工程目录</button></div><p id="project-location" class="small"></p><div id="project-results" class="result-list"></div><pre id="project-preview" hidden></pre><button id="project-ask" class="accent" hidden>让助手处理此文件</button></section>
+<section id="reports-search" class="search-section" hidden><div class="search-row"><input id="report-query" type="search" aria-label="搜索已有报告" placeholder="搜索已有调研报告"></div><div id="reports-results" class="result-list"></div></section>
+<section id="excerpt-inbox" class="excerpt-inbox" hidden><div><strong>当前选文</strong><button id="discard-excerpt" class="quiet" aria-label="忽略当前选文">×</button></div><blockquote id="excerpt-text"></blockquote><p id="excerpt-source" class="small"></p><button id="insert-excerpt" class="accent">插入笔记</button></section>
+<section id="editor-workspace" hidden>
+<div class="editor-heading"><span id="document-kind">论文精读笔记</span><button id="new-note-inline" class="quiet">＋ 新建仓库笔记</button></div>
+<input id="document-title" aria-label="笔记标题" placeholder="笔记标题" readonly>
+<div id="document-properties" class="note-properties" hidden><select id="document-folder" aria-label="笔记分类"></select><input id="document-tags" aria-label="笔记标签" placeholder="标签，用逗号分隔"></div>
+<div class="editor-tools"><div class="mode-tabs"><button id="mode-edit" aria-pressed="true">编辑</button><button id="mode-preview" aria-pressed="false">预览</button><button id="show-guide">导读</button></div><div><button id="history-button" class="quiet">历史</button><button id="copy-note" class="quiet">复制</button><button id="save-note" class="accent">保存</button></div></div>
+<button id="compare-conflict" class="conflict-banner" hidden>仓库版本已更新 · 点击对照后继续保存</button>
+<textarea id="reading-editor" aria-label="浮窗笔记编辑器" spellcheck="false" placeholder="记录研究问题、关键创新和待验证的想法。&#10;&#10;在 PDF 划选文字后，点击「编辑笔记」可继续记录。"></textarea>
+<article id="dock-preview" class="prose selectable" hidden></article><article id="dock-guide" class="prose selectable" hidden></article>
+<div class="more-tools"><button id="generate-reading">✧ AI 全文精读</button><button id="zotero-notes">查看 Zotero 笔记</button><button id="export-zotero">存入 Zotero</button></div>
+<p id="ai-notice" class="small" hidden>将当前论文的全部 PDF 文字发送至所选 AI 服务，结果作为未保存草稿追加。</p>
+<div id="native-notes-list" class="result-list" hidden></div>
+</section>
+<div id="dock-empty" class="dock-empty" hidden><span>研</span><p>选择一篇论文，或创建一篇笔记。</p><button id="empty-new" class="accent">＋ 新建笔记</button></div>
+</main>
+<footer class="dock-status"><span id="dock-status" role="status">正在连接仓库…</span><span id="character-count"></span></footer>
+<dialog id="create-note-dialog"><form id="create-note-form"><header><h2>新建笔记</h2><button type="button" id="cancel-create" aria-label="关闭新建笔记">×</button></header><label>标题<input id="create-title" required maxlength="100" placeholder="一个问题，或一个发现"></label><label>分类<select id="create-folder"></select></label><footer><button class="accent" type="submit">创建并编辑</button></footer></form></dialog>
+<dialog id="history-dialog"><header><h2>历史版本</h2><button id="close-history" aria-label="关闭历史版本">×</button></header><p class="small">载入的内容先作为草稿，保存后才更新笔记。</p><div id="history-results" class="result-list"></div></dialog>
+<dialog id="conflict-dialog"><header><h2>对照最新版本</h2><button id="close-conflict" aria-label="关闭版本对照">×</button></header><p class="small">保留草稿后保存，会将仓库当前内容留存到历史版本。</p><label>仓库最新内容<textarea id="remote-content" readonly></textarea></label><label>我的当前草稿<textarea id="local-content" readonly></textarea></label><footer><button id="keep-draft" class="accent">保留我的草稿并保存新版本</button></footer></dialog>
+</body></html>
+
+

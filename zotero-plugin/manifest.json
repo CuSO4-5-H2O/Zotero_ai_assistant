@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero AI Assistant",
+  "version": "1.6.2",
+  "description": "Zotero 内的科研工作区：笔记、PDF 问答、可编辑翻译、选文总结、工程文件与 ChatGPT 订阅登录。",
+  "author": "Research Notebook",
+  "applications": {
+    "zotero": {
+      "id": "research-notebook@local.research",
+      "update_url": "https://research-notebook.invalid/updates.json",
+      "strict_min_version": "10.0",
+      "strict_max_version": "10.0.*"
+    }
+  },
+  "homepage_url": "https://github.com/CuSO4-5-H2O/Zotero_ai_assistant"
+}
