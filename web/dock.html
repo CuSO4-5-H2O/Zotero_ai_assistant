@@ -8,9 +8,10 @@
 <main>
 <section id="paper-context"><div class="context-label"><span id="context-badge">选择文献</span><button id="open-pdf" class="quiet" hidden>回到 PDF ↗</button></div><h2 id="context-title">从 PDF 点击「科研精读」开始</h2><p id="context-meta"></p></section>
 <section id="chat-workspace" hidden aria-label="PDF AI 助手">
-<div class="chat-heading"><h2 id="chat-heading-title">科研助手</h2><button id="reload-chat" class="quiet">重新载入</button></div>
+<div class="chat-heading"><h2 id="chat-heading-title">科研助手</h2><div class="chat-heading-actions"><button id="undo-chat" class="quiet" hidden>撤销删除</button><button id="clear-chat" class="quiet">清空对话</button><button id="reload-chat" class="quiet">重新载入</button></div></div>
 <p class="chat-permissions">笔记管理 · 工程文件 · 文献标签</p>
 <div class="assistant-model-row"><span id="chat-provider">正在载入 AI 服务…</span><button data-deepseek-settings class="quiet">切换服务 / 模型</button></div><details class="chat-help"><summary>助手能做什么</summary><p class="small">阅读当前 PDF 并标注页码；新建、编辑和追加笔记；为 Zotero 论文添加标签；读取和修改所选工程中的文本或代码。删除可恢复，修改保留历史。PDF 图表图像暂不参与问答。</p></details>
+<details class="chat-help"><summary>助手默认规范</summary><p class="small">中文简洁回答，区分原文与推断；重要论文结论标注 PDF 页码。公式使用标准 LaTeX 并解释符号，长公式分行。工具操作以实际回执为准；删除聊天不会删除笔记或工程文件。</p></details>
 <div class="chat-suggestions"><button data-question="这篇论文的关键创新是什么？请结合方法与证据解释。">关键创新</button><button data-question="请解释论文核心方法的工作机制，并说明每个主要步骤的作用。">解释方法</button><button data-question="这篇论文的实验支持了哪些结论，有哪些局限和可延伸的问题？">证据与局限</button></div>
 <div id="chat-messages" class="chat-messages" aria-label="论文问答记录"></div>
 <details id="note-actions" class="note-actions" hidden open><summary>操作记录</summary><div id="note-action-list"></div></details>

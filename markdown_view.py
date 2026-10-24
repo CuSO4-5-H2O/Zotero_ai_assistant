@@ -22,6 +22,20 @@ def render_markdown(text, mapping=None):
     md.renderer.rules['math_block_label'] = md.renderer.rules['math_block']
     md.renderer.rules['math_block_eqno'] = md.renderer.rules['math_block']
     md.renderer.rules['amsmath'] = md.renderer.rules['math_block']
+    # texmath handles block brackets only at a line boundary. Preserve inline
+    # display brackets before CommonMark's escape rule can consume them.
+    def inline_display(state,silent):
+        start=state.pos
+        if not state.src.startswith(r'\[',start):return False
+        end=state.src.find(r'\]',start+2)
+        if end<0:return False
+        if not silent:
+            token=state.push('math_inline_display','span',0)
+            token.content=state.src[start+2:end]
+        state.pos=end+2
+        return True
+    md.inline.ruler.before('escape','math_inline_display',inline_display)
+    md.renderer.rules['math_inline_display']=lambda ts,i,*_: '<span class="math-display">'+html.escape(ts[i].content)+'</span>'
     tokens = md.parse(text)
     byurl = {x['url'].rstrip('/').lower(): x['id'] for x in CATALOG.values()}
     anchors = {}

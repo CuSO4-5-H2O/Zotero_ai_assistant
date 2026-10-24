@@ -100,7 +100,7 @@ var ResearchNotebookPlugin={
     const check=async()=>{
       try{const state=await IOUtils.readJSON(this.path('.runtime','state.json'));
         const response=await Zotero.HTTP.request('GET',`http://127.0.0.1:${state.port}/health`,{responseType:'json',timeout:1200});
-        if(response.response.app==='research-notebook'&&response.response.version>=10)return state;
+        if(response.response.app==='research-notebook'&&response.response.version>=11)return state;
       }catch(_){}return null;
     };
     let state=await check();if(state)return state;

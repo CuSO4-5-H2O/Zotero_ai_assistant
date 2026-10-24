@@ -8,7 +8,7 @@ def alive():
   data=json.loads(STATE.read_text(encoding='utf-8'))
   with urllib.request.urlopen('http://127.0.0.1:'+str(data['port'])+'/health',timeout=1) as r:
    health=json.load(r)
-   if health.get('app')=='research-notebook' and health.get('version',0)>=10:return data
+   if health.get('app')=='research-notebook' and health.get('version',0)>=11:return data
  except Exception:pass
  return None
 def ensure_service():

@@ -226,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 10})
+        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 11})
         if path.path == '/auth/callback':
             import html
             try:message=self.server.chatgpt.callback({k:v[0] for k,v in parse_qs(path.query).items()});status=200
@@ -376,6 +376,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.js({**result,'html':render_markdown(result['text'])})
             restore_action=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/note-actions/restore',self.path)
             if restore_action:return self.js(self.server.chat.restore_action(restore_action[1],payload.get('action_id')))
+            chat_edit=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/chat/edit',self.path)
+            if chat_edit or self.path=='/api/workspace/chat/edit':
+                return self.js((self.server.chat if chat_edit else self.server.workspace_chat).edit(chat_edit[1] if chat_edit else 'workspace',payload))
             chat_match=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/chat',self.path)
             if chat_match or self.path=='/api/workspace/chat':
                 stream=(self.server.chat.stream(chat_match[1],payload,self.server.ai.bind()) if chat_match else self.server.workspace_chat.stream('workspace',payload,self.server.ai.bind()))

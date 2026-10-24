@@ -2,6 +2,7 @@
 import hashlib,json,re,threading,time,uuid
 from note_tools import NoteTools,TOOLS,INSTRUCTIONS
 from research_tools import ResearchTools
+from assistant_rules import ASSISTANT_RULES
 
 SYSTEM=('你是科研论文阅读助手。用中文直接回答用户问题，必要时保留英文术语和公式。'
         '只能依据下方带物理页码的当前 PDF 文字；重要事实、数值、方法和结论须引用 [PDF 第 N 页]。'
@@ -32,7 +33,7 @@ class PaperChat:
         return {'version':'0','messages':[],'source_signature':None}
 
     def public(self,data):
-        return {**data,'messages':[{**m,'html':self.render(m['content']) if m['role']=='assistant' else None,**({'cited_pages':cited_pages(m['content'],m.get('pdf_pages',0))} if m['role']=='assistant' else {})} for m in data['messages']]}
+        return {**{k:v for k,v in data.items() if k!='undo_key'},'can_undo':bool(data.get('undo_key')),'messages':[{**m,'html':self.render(m['content']) if m['role']=='assistant' else None,**({'cited_pages':cited_pages(m['content'],m.get('pdf_pages',0))} if m['role']=='assistant' else {})} for m in data['messages']]}
 
     def get(self,pid):
         with self.lock:
@@ -40,6 +41,41 @@ class PaperChat:
             log=self.papers.folder(pid)/'note-actions.json'
             data['recent_actions']=json.loads(log.read_text(encoding='utf-8'))[-30:] if log.exists() else []
             return data
+
+    def edit(self,pid,payload):
+        with self.lock:
+            if pid in self.busy:raise ValueError('请先停止回答，稍后再删除对话')
+            data=self.read(pid)
+            if payload.get('version')!=data['version']:raise ValueError('对话已在其他窗口更新，请重新载入')
+            action=payload.get('action')
+            if action=='undo':
+                key=data.get('undo_key','')
+                if not re.fullmatch(r'[a-f0-9]{32}',key):raise ValueError('没有可恢复的删除记录')
+                path=self.papers.folder(pid)/'chat-history'/('deleted-'+key+'.json')
+                if not path.exists():raise ValueError('未找到删除记录')
+                updated=json.loads(path.read_text(encoding='utf-8'))
+                if data['messages'] and data.get('source_signature')!=updated.get('source_signature'):raise ValueError('PDF 附件已变化，不能将旧对话混入新文献')
+                restored={m.get('id') for m in updated['messages']}
+                updated['messages'] += [m for m in data['messages'] if m.get('id') not in restored]
+            elif action in {'clear','delete_turn'}:
+                messages=data['messages']
+                if action=='clear':remaining=[]
+                else:
+                    index=next((i for i,m in enumerate(messages) if m.get('id')==payload.get('message_id')),None)
+                    if index is None:raise ValueError('这条对话已不存在，请重新载入')
+                    start=index
+                    while start>0 and messages[start]['role']!='user':start-=1
+                    end=start+1
+                    while end<len(messages) and messages[end]['role']!='user':end+=1
+                    remaining=messages[:start]+messages[end:]
+                if remaining==messages:return self.get(pid)
+                key=uuid.uuid4().hex
+                self.atomic(self.papers.folder(pid)/'chat-history'/('deleted-'+key+'.json'),json.dumps(data,ensure_ascii=False))
+                updated={**data,'messages':remaining,'undo_key':key}
+            else:raise ValueError('未知的对话操作')
+            updated['version']=uuid.uuid4().hex
+            self.atomic(self.path(pid),json.dumps(updated,ensure_ascii=False))
+            return self.get(pid)
 
     def restore_action(self,pid,action_id):
         with self.lock:
@@ -85,7 +121,7 @@ class PaperChat:
             history.reverse()
             # Never begin the provider conversation with an orphaned assistant turn.
             if history and history[0]['role']=='assistant':history.pop(0)
-            system=SYSTEM+'\n\n当前论文：'+self.papers.item(pid)['title']+'\n\n<PDF_TEXT>\n'+source+'\n</PDF_TEXT>'
+            system=SYSTEM+'\n\n'+ASSISTANT_RULES+'\n\n当前论文：'+self.papers.item(pid)['title']+'\n\n<PDF_TEXT>\n'+source+'\n</PDF_TEXT>'
             toolkit=ResearchTools(self.vault,self.papers,pid,self.atomic,question,data['version'],projects=self.projects,native=self.native) if manage_notes else None
             if toolkit:system+=toolkit.instructions
             if toolkit and payload.get('context_note'):
@@ -133,7 +169,7 @@ class PaperChat:
             user={'id':uuid.uuid4().hex,'role':'user','content':question,'time':stamp}
             assistant={'id':uuid.uuid4().hex,'role':'assistant','question':question,'content':answer,'time':stamp,'model':result['model'],'cited_pages':cited,'pdf_pages':len(pages['pages']),'readable_pages':sum(bool(p['text'].strip()) for p in pages['pages'])}
             if toolkit:assistant['actions']=toolkit.results
-            updated={'version':uuid.uuid4().hex,'messages':[*previous,user,assistant],'source_signature':fingerprint}
+            updated={**data,'version':uuid.uuid4().hex,'messages':[*previous,user,assistant],'source_signature':fingerprint}
             with self.lock:
                 if self.read(pid)['version']!=data['version']:raise ValueError('对话版本已变化，请重新载入后重试')
                 if data['messages'] and not previous:

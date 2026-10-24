@@ -13,8 +13,10 @@ var ResearchChat=(()=>{
     const who=document.createElement('strong');who.textContent=role==='user'?'你':'AI 助手';
     const body=document.createElement('div');body.className=role==='assistant'?'chat-answer prose selectable':'chat-question';
     if(html){body.innerHTML=html;paintMath(body);}else body.textContent=text;
-    item.append(who,body);
-    if(role==='assistant'&&metadata){
+    const heading=document.createElement('div');heading.className='chat-message-heading';heading.append(who);
+    if(metadata?.id){const remove=button('删除本轮',()=>editConversation('delete_turn',metadata.id));remove.title='删除这一轮提问和回答，可撤销';remove.className='quiet';heading.append(remove);}
+    item.append(heading,body);
+    if(role==='assistant'&&metadata?.id){
       const tools=document.createElement('div');tools.className='chat-answer-tools';
       tools.append(button('复制回答',async()=>{try{await navigator.clipboard.writeText(text);status('回答已复制');}catch(_){status('请选中回答文字复制',true);}}));
       const pid=paper.id;
@@ -29,9 +31,9 @@ var ResearchChat=(()=>{
   }
   function render(){
     $('chat-messages').replaceChildren();
-    for(const m of conversation.messages)message(m.role,m.content,m.html,m.role==='assistant'?m:null);
+    for(const m of conversation.messages)message(m.role,m.content,m.html,m);
     if(!conversation.messages.length){const p=document.createElement('p');p.className='chat-empty';p.textContent='从一个具体问题开始。你也可以点击上方问题，随后继续追问。';$('chat-messages').append(p);}
-    renderActions();
+    renderActions();$('clear-chat').textContent='清空对话';$('undo-chat').hidden=!conversation.can_undo;$('clear-chat').disabled=!conversation.messages.length;
   }
   function renderActions(){
     const rows=conversation.recent_actions||[];$('note-actions').hidden=!rows.length;$('note-action-list').replaceChildren();
@@ -42,6 +44,14 @@ var ResearchChat=(()=>{
       if(['delete_note','trash_project_file'].includes(row.action)&&[...rows].reverse().find(r=>r.note_id===row.note_id)?.id===row.id)card.append(button('恢复',async()=>{try{const data=await api(base(paper.id)+'/note-actions/restore',{action_id:row.id});conversation.recent_actions=data.recent_actions;renderActions();document.dispatchEvent(new CustomEvent('research-note-action',{detail:data}));status('笔记已恢复');}catch(e){status(e.message,true);}}));
       $('note-action-list').append(card);
     }
+  }
+  async function editConversation(action,messageId){
+    if(!paper)return;
+    if(loading){status('请先停止回答，再删除对话',true);return;}
+    const pid=paper.id,current=++run;loading=true;$('send-chat').disabled=true;
+    try{const data=await api(base(pid)+'/chat/edit',{action,message_id:messageId,version:conversation.version});if(current!==run)return;conversation=data;render();status(action==='undo'?'已恢复删除的对话':'对话已删除，可撤销；不会再发送给 AI');}
+    catch(e){if(current===run)status(e.message,true);}
+    finally{if(current===run){loading=false;$('send-chat').disabled=false;$('clear-chat').textContent='清空对话';}}
   }
   async function open(value,force=false){
     if(!value)value={id:'workspace'};$('chat-heading-title').textContent=value.id==='workspace'?'科研工作区助手':'与当前论文对话';for(const [i,b] of [...document.querySelectorAll('[data-question]')].entries()){b.textContent=value.id==='workspace'?b.dataset.workspaceLabel:b.dataset.originalLabel;b.dataset.question=value.id==='workspace'?b.dataset.workspaceQuestion:b.dataset.originalQuestion;}
@@ -59,7 +69,8 @@ var ResearchChat=(()=>{
     const question=$('chat-question').value.trim();if(!question)return;
     const current=++run,pid=paper.id;controller=new AbortController();loading=true;$('send-chat').disabled=true;$('stop-chat').hidden=false;
     if(!conversation.messages.length)$('chat-messages').replaceChildren();
-    message('user',question);const output=message('assistant','正在处理…');let text='',done=false,buffer='';
+    message('user',question);const output=message('assistant','正在处理…');let text='',done=false,buffer='',previewTimer=null,previewBusy=false,previewDirty=false;
+    const preview=async()=>{previewTimer=null;if(previewBusy||current!==run||done)return;previewBusy=true;previewDirty=false;const snapshot=text;try{const data=await api('/api/preview',{content:snapshot});if(current===run&&!done&&output.isConnected){output.innerHTML=data.html;paintMath(output);}}catch(_){}finally{previewBusy=false;if(previewDirty&&current===run&&!done)previewTimer=setTimeout(preview,180);}};
     status('正在准备所需上下文…');
     try{
       const response=await fetch(base(pid)+'/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Notebook-Request':'1'},body:JSON.stringify({question,version:conversation.version,context_note:document.body.dataset.note||null}),signal:controller.signal});
@@ -68,7 +79,7 @@ var ResearchChat=(()=>{
       const consume=line=>{if(!line.trim()||current!==run)return;const event=JSON.parse(line);
         if(event.type==='error')throw new Error(event.error);
         if(event.type==='source'){status(event.notes_only?'正在处理任务…':'已读取 '+event.pages+' 页 PDF 文字层，其中 '+event.readable_pages+' 页有文字'+(event.source_changed?'；附件已更换，本次使用新上下文':'')+' · 正在回答…');if(event.notes_only)output.textContent='正在处理任务…';}
-        if(event.type==='delta'){text+=event.text;output.textContent=text;}
+        if(event.type==='delta'){text+=event.text;previewDirty=true;if(!output.querySelector('.katex'))output.textContent=text;if(!previewTimer&&!previewBusy)previewTimer=setTimeout(preview,180);}
         if(event.type==='phase'){text='';output.textContent=event.text;}
         if(event.type==='tool_status')status(({search_notes:'正在查找笔记',read_note:'正在读取笔记',create_note:'正在新建笔记',update_note:'正在编辑笔记',delete_note:'正在移入回收站',restore_note:'正在恢复笔记'}[event.name]||'正在处理任务')+'…');
         if(event.type==='tool_error')status(event.error,true);
@@ -84,11 +95,13 @@ var ResearchChat=(()=>{
       if(current!==run)return;if(!done)throw new Error('回答连接中断，部分内容未保存');
       if($('chat-question').value.trim()===question){drafts.delete(pid);$('chat-question').value='';}conversation=await api(base(pid)+'/chat');if(current!==run)return;render();status('回答已保存到当前论文，可继续追问或追加到精读笔记');
     }catch(e){if(current===run){status(e.name==='AbortError'?'已停止，部分回答未保存':e.message,true);output.textContent=text||'本次未生成回答。';}}
-    finally{if(current===run){controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}}
+    finally{clearTimeout(previewTimer);if(current===run){controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}}
   }
   $('chat-form').onsubmit=ask;
   $('stop-chat').onclick=()=>{stop();status('已停止；完整记录重新载入后可继续查看，部分回答未保存');};
   $('reload-chat').onclick=()=>open(paper,true);
+  $('clear-chat').onclick=()=>{if($('clear-chat').textContent!=='确认清空'){ $('clear-chat').textContent='确认清空';status('再次点击确认清空当前对话，可撤销');return;}editConversation('clear');};
+  $('undo-chat').onclick=()=>editConversation('undo');
   $('chat-question').oninput=()=>{if(paper)drafts.set(paper.id,$('chat-question').value);};
   $('chat-question').onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();ask();}};
   document.querySelectorAll('[data-question]').forEach((b,i)=>{b.dataset.originalQuestion=b.dataset.question;b.dataset.originalLabel=b.textContent;b.dataset.workspaceQuestion=['列出当前工程文件','整理仓库中最近的笔记','新建一篇“研究计划”笔记，记录当前课题目标、待验证问题和下一步实验。'][i];b.dataset.workspaceLabel=['查看工程文件','整理仓库笔记','新建研究计划'][i];});
