@@ -65,7 +65,7 @@ var ResearchChat=(()=>{
     finally{if(current===run){loading=false;$('send-chat').disabled=false;}}
   }
   async function ask(event){
-    event?.preventDefault();if(loading||!paper)return;
+    event?.preventDefault();if(ResearchUI.aiSaving){status('模型设置正在保存，请稍后发送');return;}if(loading||!paper)return;
     const question=$('chat-question').value.trim();if(!question)return;
     const current=++run,pid=paper.id;controller=new AbortController();loading=true;$('send-chat').disabled=true;$('stop-chat').hidden=false;
     if(!conversation.messages.length)$('chat-messages').replaceChildren();

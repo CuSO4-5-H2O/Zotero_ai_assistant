@@ -143,7 +143,7 @@ class ChatGPT:
         cached=self.catalog.get(cid)
         if cached and not refresh and cached[0]>time.time()-300:return cached[1]
         body=json_request(RESOURCE+'/models',token=token)
-        models=[{'id':m['slug'],'name':m.get('display_name') or m['slug']} for m in body.get('models',[]) if m.get('visibility')=='list' and isinstance(m.get('slug'),str)]
+        models=[{'id':m['slug'],'name':m.get('display_name') or m['slug'],'reasoning_levels':[r['effort'] for r in m.get('supported_reasoning_levels',[]) if isinstance(r,dict) and isinstance(r.get('effort'),str)],'default_effort':m.get('default_reasoning_level','')} for m in body.get('models',[]) if m.get('visibility')=='list' and isinstance(m.get('slug'),str)]
         self.catalog[cid]=(time.time(),models);return models
     def logout(self,cid):
         confirmed=True
@@ -160,7 +160,7 @@ class ChatGPT:
             self.notice='已退出 ChatGPT' if confirmed else '已在本机退出；远端撤销未确认，可在 ChatGPT 设置中断开此应用'
         return self.public()
     @staticmethod
-    def body(messages,model,tools=None):
+    def body(messages,model,tools=None,effort=None):
         inputs=[];instructions=[]
         for m in messages:
             if m['role']=='system':instructions.append(m['content']);continue
@@ -171,14 +171,17 @@ class ChatGPT:
             for call in m.get('tool_calls') or []:
                 inputs.append({'type':'function_call','call_id':call['id'],'name':call['function']['name'],'namespace':'notebook','arguments':call['function']['arguments']})
         body={'model':model,'instructions':'\n\n'.join(instructions),'input':inputs,'store':False,'stream':True}
+        if effort:body['reasoning']={'effort':effort}
         if tools:body['tools']=[{'type':'namespace','name':'notebook','description':'User-authorized local research workspace operations','tools':[{'type':'function',**t['function'],'strict':False} for t in tools]}]
         return body
-    def chat_stream(self,messages,tools=None,model=None,account=None):
+    def chat_stream(self,messages,tools=None,model=None,account=None,effort=None):
         cid,token=self.access(account)
         if not model or model not in {m['id'] for m in self.models(cid=cid)}:raise ValueError('请在 AI 设置中选择此账号可用的模型')
+        selected=next((m for m in self.models(cid=cid) if m['id']==model),{})
+        if effort and effort not in selected.get('reasoning_levels',[]):raise ValueError('当前模型不支持所选推理等级，请重新选择')
         if not self.gate.acquire(False):raise ValueError('已有两个 ChatGPT 请求正在处理，请稍后重试')
         try:
-            body=self.body(messages,model,tools);text='';completed=None
+            body=self.body(messages,model,tools,effort);text='';completed=None
             req=request.Request(RESOURCE+'/responses',data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'text/event-stream'})
             try:
                 with request.urlopen(req,timeout=45) as response:

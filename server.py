@@ -226,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 11})
+        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 12})
         if path.path == '/auth/callback':
             import html
             try:message=self.server.chatgpt.callback({k:v[0] for k,v in parse_qs(path.query).items()});status=200
@@ -249,6 +249,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path.path == '/api/deepseek/settings': return self.js(self.server.deepseek.public())
             if path.path == '/api/ai/settings':return self.js(self.server.ai.public())
+            if path.path == '/api/ai/catalog':return self.js(self.server.ai.catalog(refresh=parse_qs(path.query).get('refresh')==['1']))
             if path.path == '/api/ai/models':return self.js({'models':self.server.chatgpt.models(refresh=parse_qs(path.query).get('refresh')==['1'])})
             if path.path == '/api/projects/settings':return self.js(self.server.projects.settings())
             if path.path == '/api/projects/files':return self.js(self.server.projects.bind().list(parse_qs(path.query).get('q',[''])[0]))

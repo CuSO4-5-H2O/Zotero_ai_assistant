@@ -147,7 +147,7 @@ class PaperChat:
                 if not result:raise ValueError('回答未完整返回，请重试')
                 calls=result.get('tool_calls') or []
                 if not calls:break
-                messages.append({'role':'assistant','content':result['text'] or None,'tool_calls':calls,**({'_response_output':result['response_output']} if result.get('response_output') else {})})
+                messages.append({'role':'assistant','content':result['text'] or None,'tool_calls':calls,**({'_response_output':result['response_output']} if result.get('response_output') else {}),**({'reasoning_content':result['reasoning_content']} if result.get('reasoning_content') else {})})
                 for call in calls:
                     if not toolkit:raise ValueError('当前未配置笔记工具')
                     name=call['function']['name'];yield {'type':'tool_status','name':name}

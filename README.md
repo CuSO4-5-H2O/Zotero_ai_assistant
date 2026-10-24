@@ -115,3 +115,9 @@ CI 检查 Python/JavaScript 语法、固定版本的 KaTeX 下载完整性与 XP
 - 每条消息右上角“删除本轮”会删除对应的一问一答；“清空对话”需再次点击确认，作用于当前论文或工作区。可通过“撤销删除”恢复，删除的内容不再进入 AI 上下文；本机保留恢复快照。
 - 默认规范在每轮请求中生效，适用于所有已配置模型：中文简洁回答、区分文献与推断、引用 PDF 页码、以工具回执为准。规范位于 `assistant_rules.py`，修改后重启本地服务生效。
 - 公式优先使用 `$...$` 和独立成行的 `$$...$$`；支持分式、矩阵与 aligned 多行推导，并兼容 `\(...\)`、`\[...\]`。回答生成中提供公式预览，结束后统一排版。模型输出的 LaTeX 仍须符合 KaTeX 语法。
+
+### 在助手中切换模型与推理等级
+
+进入“AI 助手”，在顶部直接选择模型和推理等级，选择后自动保存，下一次提问生效。模型和可用等级从已登录或已配置服务的模型目录读取；换模型会自动重置不兼容的等级。点击 ↻ 可刷新目录。当前正在生成的回答继续使用发起时的设置。划词翻译单独配置，保留快速模式。
+
+ChatGPT 通过 Responses 的 `reasoning.effort` 设置，DeepSeek 通过 `thinking` 与 `reasoning_effort` 设置；推理正文不展示为回答。接口说明：[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
