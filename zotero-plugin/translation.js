@@ -1,5 +1,26 @@
 /* Streaming through Zotero's native XHR, as supported by the reader sandbox. */
 var ResearchNotebookTranslation={
+  selectionLifetime(event,box,dispose){
+    const docs=new Set(),sourceDocs=new Set(),listeners=[];let inside=false,closed=false,seen=false;
+    const collect=(win,depth=0)=>{if(!win||depth>5)return;try{const d=win.document;if(docs.has(d))return;docs.add(d);for(let i=0;i<win.frames.length;i++)collect(win.frames[i],depth+1);}catch(_){}};
+    collect(event.doc.defaultView);docs.add(event.doc);
+    const protectedNow=()=>inside||[...docs].some(d=>box.contains(d.activeElement));
+    const on=(node,name,fn)=>{node.addEventListener(name,fn,true);listeners.push(()=>node.removeEventListener(name,fn,true));};
+    const close=()=>{if(!closed)dispose();};
+    for(const d of docs){
+      try{if(d.getSelection()?.toString().trim())sourceDocs.add(d);}catch(_){}
+      on(d,'pointerdown',e=>{inside=box.contains(e.target);if(!inside)close();});
+      on(d,'pointerup',()=>{inside=false;});
+      on(d,'keydown',e=>{if(e.key==='Escape')close();});
+      on(d,'selectionchange',()=>{if(protectedNow()||!sourceDocs.size)return;const selected=[...sourceDocs].some(s=>{try{return !!s.getSelection()?.toString().trim();}catch(_){return false;}});if(!selected)close();});
+    }
+    // Follow Zotero's own selection-popup lifecycle even when selection lives in
+    // a reader frame whose DOM selection isn't exposed to the extension event.
+    const marker=event.doc.createElement('span');marker.hidden=true;event.append(marker);
+    const Observer=event.doc.defaultView.MutationObserver;let observer;
+    if(Observer){observer=new Observer(()=>{if(marker.isConnected)seen=true;else if(seen&&!protectedNow())close();});observer.observe(event.doc.documentElement,{childList:true,subtree:true});seen=marker.isConnected;}
+    return ()=>{closed=true;observer?.disconnect();for(const remove of listeners)remove();marker.remove();};
+  },
   dimensions(source,result,win){
     const length=Math.max(source.length,result.length*1.35),available=Math.max(180,(win?.innerWidth||1100)-40);
     const ideal=length<40?330:length<220?480:length<900?650:length<2400?780:900;

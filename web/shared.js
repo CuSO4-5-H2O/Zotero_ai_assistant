@@ -88,7 +88,7 @@ window.ResearchUI = (() => {
   }
   document.addEventListener('mousedown',event=>{if(event.target.closest?.('#translation-panel,#ds-dialog'))return;pointerDown=true;dismissTranslation();});
   document.addEventListener('mouseup',event=>{pointerDown=false;if(!event.target.closest?.('#translation-panel,#ds-dialog'))scheduleSelection();});
-  document.addEventListener('selectionchange',()=>{if(pointerDown)clearTimeout(selectionTimer);});
+  document.addEventListener('selectionchange',()=>{if(pointerDown){clearTimeout(selectionTimer);return;}if(document.activeElement?.closest('#translation-panel,#ds-dialog,#ai-settings')||window.getSelection()?.anchorNode?.parentElement?.closest('#translation-panel'))return;if(!readSelection())dismissTranslation();});
   document.addEventListener('keyup',event=>{if(event.key==='Shift'||event.key.startsWith('Arrow'))scheduleSelection();});
   document.addEventListener('keydown',event=>{if(event.key==='Escape')dismissTranslation();});
   document.addEventListener('scroll',event=>{if(!event.target.closest?.('#translation-panel'))dismissTranslation();},true);

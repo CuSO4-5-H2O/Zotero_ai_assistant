@@ -212,7 +212,7 @@ var ResearchNotebookPlugin={
   async sync(win){const data=await this.request('/api/zotero/sync',{});Services.prompt.alert(win,'科研笔记仓库',`本次关联 ${data.linked.length} 篇报告文献。\nPDF 直接读取 Zotero storage，未复制或移动原附件。`);},
   readerToolbar(event){const button=event.doc.createElement('button');button.textContent='科研精读';button.title='使用当前 Zotero PDF 进入科研笔记仓库';button.addEventListener('click',()=>this.openSelected(Zotero.getMainWindow(),event.reader).catch(error=>this.error(error)));const home=event.doc.createElement('button');home.textContent='仓库';home.title='直接查看笔记和报告';home.addEventListener('click',()=>this.openPage().catch(error=>this.error(error)));event.append(button);event.append(home);},
   selectionPopup(event){
-    const {doc,params,reader}=event,text=params.annotation?.text?.trim();if(!text||doc.activeElement?.closest?.('.rn-auto-translation'))return;
+    const {doc,params,reader}=event,text=params.annotation?.text?.trim();if(doc.activeElement?.closest?.('.rn-auto-translation'))return;if(!text){this.selectionStates.get(reader)?.dispose?.();return;}
     this.selectionStates.get(reader)?.dispose?.();
     const state={run:0,timer:null};this.selectionStates.set(reader,state);
     const box=doc.createElement('section');box.className='rn-auto-translation';box.setAttribute('aria-label','选文翻译与总结');box.style.cssText='position:fixed;z-index:2147482000;top:22px;right:22px;height:300px;min-width:180px;min-height:190px;max-height:calc(100vh - 16px);white-space:normal;overflow:hidden;box-sizing:border-box;display:flex;flex-direction:column;border:1px solid #bed4c9;border-radius:12px;background:#fff;color:#24493e;box-shadow:0 14px 60px #143b3b35;font:13px system-ui;';
@@ -256,7 +256,9 @@ var ResearchNotebookPlugin={
     ResearchNotebookTranslation.fit(box,output,text,'',doc.defaultView);
     const layout=ResearchNotebookTranslation.floating(box,header,doc.defaultView,'translation',300,190);
     for(const type of ['pointerdown','mousedown','mouseup','click','dblclick','keydown','keyup'])box.addEventListener(type,e=>e.stopPropagation());
-    state.dispose=()=>{state.run++;state.subscription?.cancel();layout.dispose();box.remove();this.selectionPanels.delete(state);doc.defaultView.removeEventListener('unload',state.dispose);};
+    let stopLifetime=null,disposed=false;
+    state.dispose=()=>{if(disposed)return;disposed=true;state.run++;state.subscription?.cancel();stopLifetime?.();layout.dispose();box.remove();this.selectionPanels.delete(state);doc.defaultView.removeEventListener('unload',state.dispose);};
+    stopLifetime=ResearchNotebookTranslation.selectionLifetime(event,box,state.dispose);
     this.selectionPanels.add(state);doc.defaultView.addEventListener('unload',state.dispose,{once:true});close.addEventListener('click',state.dispose);schedule();
   }
 };
