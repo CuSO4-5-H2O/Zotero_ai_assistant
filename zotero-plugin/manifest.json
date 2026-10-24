@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Zotero AI Assistant",
-  "version": "1.6.4",
+  "version": "1.6.6",
   "description": "Zotero 内的科研工作区：笔记、PDF 问答、可编辑翻译、选文总结、工程文件与 ChatGPT 订阅登录。",
   "author": "Research Notebook",
   "applications": {

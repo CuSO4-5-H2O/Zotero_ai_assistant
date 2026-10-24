@@ -47,7 +47,7 @@
    .\.runtime\python\pythonw.exe launcher.py
    ```
 
-4. 在 Zotero 的 **工具 → 插件 → 齿轮 → 从文件安装插件** 中安装 `dist/research-notebook-1.6.4.xpi`。插件需要配套的本地 Python 服务，不能只复制 XPI 到另一台电脑使用。
+4. 在 Zotero 的 **工具 → 插件 → 齿轮 → 从文件安装插件** 中安装 `dist/research-notebook-1.6.6.xpi`。插件需要配套的本地 Python 服务，不能只复制 XPI 到另一台电脑使用。
 
 5. 点击 Zotero 右下角的 **科研仓库**，或使用 `Ctrl+Alt+N`。在 PDF 中点击 **科研精读** 关联当前论文。
 
