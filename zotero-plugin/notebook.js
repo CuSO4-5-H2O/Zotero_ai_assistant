@@ -258,8 +258,12 @@ var ResearchNotebookPlugin={
     for(const type of ['pointerdown','mousedown','mouseup','click','dblclick','keydown','keyup'])box.addEventListener(type,e=>e.stopPropagation());
     let stopLifetime=null,disposed=false;
     state.dispose=()=>{if(disposed)return;disposed=true;state.run++;state.subscription?.cancel();stopLifetime?.();layout.dispose();box.remove();this.selectionPanels.delete(state);doc.defaultView.removeEventListener('unload',state.dispose);};
-    stopLifetime=ResearchNotebookTranslation.selectionLifetime(event,box,state.dispose);
-    this.selectionPanels.add(state);doc.defaultView.addEventListener('unload',state.dispose,{once:true});close.addEventListener('click',state.dispose);schedule();
+    this.selectionPanels.add(state);doc.defaultView.addEventListener('unload',state.dispose,{once:true});close.addEventListener('click',state.dispose);
+    // Translation must start even if optional lifecycle observation is unavailable.
+    schedule();
+    try{stopLifetime=ResearchNotebookTranslation.selectionLifetime(event,box,state.dispose);}catch(error){
+      this.translationDiagnostics=(this.translationDiagnostics||[]).slice(-9);this.translationDiagnostics.push({stage:'lifecycle',error:String(error).slice(0,200)});Zotero.logError(error);
+    }
   }
 };
 
