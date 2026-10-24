@@ -100,7 +100,7 @@ var ResearchNotebookPlugin={
     const check=async()=>{
       try{const state=await IOUtils.readJSON(this.path('.runtime','state.json'));
         const response=await Zotero.HTTP.request('GET',`http://127.0.0.1:${state.port}/health`,{responseType:'json',timeout:1200});
-        if(response.response.app==='research-notebook'&&response.response.version>=13)return state;
+        if(response.response.app==='research-notebook'&&response.response.version>=14)return state;
       }catch(_){}return null;
     };
     let state=await check();if(state)return state;
@@ -177,11 +177,11 @@ var ResearchNotebookPlugin={
     const path=Zotero.URI.getLibraryPath(att.libraryID),scope=path.startsWith('groups/')?path:'library';
     return this.request('/api/dock/publish',{channel:dock.channel,event:{type:'clip',paper_id:record.id,title:record.title,text:text.trim(),page,attachment_key:att.key,library_id:att.libraryID,clip_kind:kind,autosave:true,source_uri:'zotero://open-pdf/'+scope+'/items/'+att.key+(page?'?page='+page:'')}});
   },
-  async openSelectionWorkspace(reader,annotation,intent='edit'){
+  async openSelectionWorkspace(reader,annotation,intent='edit',selectionKind='original'){
     const win=reader?._window||Zotero.getMainWindow(),record=await this.registerSelected(win,reader),dock=await this.openPage(record.id,win,true),att=Zotero.Items.get(reader.itemID);
     const page=Number.isInteger(annotation?.position?.pageIndex)?annotation.position.pageIndex+1:null;
     const path=Zotero.URI.getLibraryPath(att.libraryID),scope=path.startsWith('groups/')?path:'library';
-    await this.request('/api/dock/publish',{channel:dock.channel,event:{type:'context',intent,paper_id:record.id,title:record.title,text:annotation?.text?.trim()||'',page,attachment_key:att.key,library_id:att.libraryID,source_uri:'zotero://open-pdf/'+scope+'/items/'+att.key+(page?'?page='+page:'')}});
+    await this.request('/api/dock/publish',{channel:dock.channel,event:{type:'context',intent,selection_kind:selectionKind,paper_id:record.id,title:record.title,text:annotation?.text?.trim()||'',page,attachment_key:att.key,library_id:att.libraryID,source_uri:'zotero://open-pdf/'+scope+'/items/'+att.key+(page?'?page='+page:'')}});
     return dock;
   },
   async nativeAction(data){
@@ -231,6 +231,8 @@ var ResearchNotebookPlugin={
     const target=doc.createElement('select');target.setAttribute('aria-label','翻译目标语言');for(const name of ['简体中文','English']){const option=doc.createElement('option');option.value=name;option.textContent=name==='简体中文'?'中文':name;target.append(option);}
     const copy=doc.createElement('button');copy.textContent='复制';copy.disabled=true;
     const summary=doc.createElement('button');summary.textContent='总结';summary.title='总结当前选中的原文';
+    const assistant=doc.createElement('button');assistant.textContent='✧';assistant.title='带着当前选文打开 AI 助手';assistant.setAttribute('aria-label','AI 助手');
+    assistant.addEventListener('click',async()=>{const selected=ResearchNotebookTranslation.selectedText(output);const kind=selected?(mode==='summary'?'summary':'translation'):'original';assistant.disabled=true;try{await this.openSelectionWorkspace(reader,{...params.annotation,text:selected||text},'assistant',kind);}catch(error){hint.textContent=error.message;}finally{assistant.disabled=false;}});
     const translate=doc.createElement('button');translate.textContent='翻译';
     const note=doc.createElement('button');note.textContent='存入笔记';note.disabled=true;
     const excerpt=doc.createElement('button');excerpt.textContent='摘抄到笔记';excerpt.title='先在译文中选中文字，再摘抄到当前笔记';excerpt.disabled=true;
@@ -263,7 +265,7 @@ var ResearchNotebookPlugin={
     excerpt.addEventListener('click',async()=>{const selected=ResearchNotebookTranslation.selectedText(output);if(!selected)return;excerpt.disabled=true;try{await this.addTranslatedExcerpt(reader,params.annotation,selected,mode==='summary'?'summary':'translation');hint.textContent='已发送所选内容，笔记浮窗将显示保存结果';}catch(error){hint.textContent=error.message;}finally{updateExcerpt();}});
     copy.addEventListener('click',()=>{const selected=output.value.slice(output.selectionStart,output.selectionEnd);Components.classes['@mozilla.org/widget/clipboardhelper;1'].getService(Components.interfaces.nsIClipboardHelper).copyString(selected||output.value);copy.textContent='已复制';});
     note.addEventListener('click',async()=>{note.disabled=true;try{const record=await this.registerSelected(reader?._window||Zotero.getMainWindow(),reader);await this.request('/api/notes',{title:(mode==='summary'?'选文总结':'翻译笔记')+' · '+record.id,folder:'文献笔记',tags:[record.id,mode==='summary'?'总结':'翻译'],content:'来源：['+record.title+'](/paper/'+record.id+')\n\n## 原文\n\n'+text+'\n\n## '+(mode==='summary'?'总结':'译文')+'\n\n'+output.value});note.textContent='已保存';}catch(error){hint.textContent=error.message;note.disabled=false;}});
-    header.append(title,translate,summary,target,close);actions.append(edit,create,reports,copy,excerpt,note);box.append(style,header,output,hint,actions);(doc.body||doc.documentElement).append(box);
+    header.append(title,translate,summary,assistant,target,close);actions.append(edit,create,reports,copy,excerpt,note);box.append(style,header,output,hint,actions);(doc.body||doc.documentElement).append(box);
     ResearchNotebookTranslation.fit(box,output,text,'',doc.defaultView);
     const layout=ResearchNotebookTranslation.floating(box,header,doc.defaultView,'translation',300,190);
     for(const type of ['pointerdown','mousedown','mouseup','click','dblclick','keydown','keyup'])box.addEventListener(type,e=>e.stopPropagation());

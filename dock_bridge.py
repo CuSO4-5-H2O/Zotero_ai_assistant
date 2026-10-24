@@ -37,13 +37,14 @@ class DockBridge:
                 raise ValueError('PDF 页码不合法')
             if event.get('source_uri') and not re.fullmatch(r'zotero://open-pdf/(?:library|groups/\d+)/items/[A-Z0-9]{8}(?:\?page=\d+)?',str(event['source_uri'])):
                 raise ValueError('PDF 来源链接不合法')
-            if event['type']=='context' and event.get('intent') not in {'edit','new','reports'}:raise ValueError('笔记操作不合法')
+            if event['type']=='context' and event.get('intent') not in {'edit','new','reports','assistant'}:raise ValueError('笔记操作不合法')
+        if event.get('selection_kind') not in {None,'original','translation','summary'}:raise ValueError('选文类型不合法')
         if event.get('clip_kind') not in {None,'translation','summary'}:raise ValueError('摘抄类型不合法')
         if 'autosave' in event and type(event['autosave']) is not bool:raise ValueError('保存选项不合法')
         with self.condition:
             state = self.state(channel)
             state['sequence'] += 1
-            message = {key: event[key] for key in ['type', 'paper_id', 'text', 'page', 'title', 'attachment_key', 'library_id', 'source_uri','intent','clip_kind','autosave'] if key in event}
+            message = {key: event[key] for key in ['type', 'paper_id', 'text', 'page', 'title', 'attachment_key', 'library_id', 'source_uri','intent','clip_kind','autosave','selection_kind'] if key in event}
             state['events'].append({**message, 'sequence': state['sequence']})
             state['events'] = state['events'][-80:]
             state['touched'] = time.monotonic()

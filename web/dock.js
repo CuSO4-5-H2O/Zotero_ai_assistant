@@ -72,6 +72,7 @@
     return '\n\n'+source+(clip.clip_kind==='translation'?'\n\n**译文摘抄**':clip.clip_kind==='summary'?'\n\n**总结摘抄**':'')+'\n\n'+clip.text.split(/\r?\n/).map(line=>'> '+line).join('\n')+'\n';
   }
   async function openContext(event){
+    if(event.intent==='assistant'){if(paper?.id!==event.paper_id)await openPaper(event.paper_id);showPane('assistant');await ResearchChat.setSelection(paper,event);status('选文已带入 AI 助手，可直接提问');return;}
     if(event.intent==='reports'){showPane('reports');return;}
     if(paper?.id!==event.paper_id||documentNote?.kind!=='paper')await openPaper(event.paper_id);
     if(event.intent==='new'){newNote(event);return;}
