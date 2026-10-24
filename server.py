@@ -27,6 +27,7 @@ from chatgpt_client import ChatGPT
 from ai_service import AIService
 from project_files import ProjectFiles
 from research_tools import native_action
+from literature import LiteratureService
 from workspace_context import WorkspaceContext
 import urllib.request
 
@@ -228,7 +229,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 15})
+        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 17})
         if path.path == '/auth/callback':
             import html
             try:message=self.server.chatgpt.callback({k:v[0] for k,v in parse_qs(path.query).items()});status=200
@@ -268,6 +269,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.path == '/api/dock/events':
                 query=parse_qs(path.query)
                 return self.js(self.server.dock.events(query.get('channel',[''])[0],query.get('since',['0'])[0]))
+            if path.path=='/api/literature/tasks':return self.js(self.server.literature.recent())
+            if path.path.startswith('/api/literature/tasks/'):
+                return self.js(self.server.literature.get(path.path.rsplit('/',1)[-1]))
             if path.path == '/api/papers': return self.js(list(self.server.papers.refs.values()))
             history_match=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/history(?:/(\d{{8}}_\d{{6}}_\d{{6}}))?',path.path)
             if history_match:
@@ -311,7 +315,7 @@ class Handler(BaseHTTPRequestHandler):
                         for p in self.server.vault.root.rglob('*'):
                             if p.is_file() and p.suffix in {'.md', '.json', '.pdf'}: z.write(p, p.relative_to(self.server.vault.root))
                 return self.send_bytes(stream.getvalue(), 'application/zip', extra={'Content-Disposition': 'attachment; filename="ResearchNotebook.zip"'})
-            if path.path == '/' or re.fullmatch(rf'/paper/{PAPER_ID_RE}',path.path) or path.path in {'/dock','/dock.js','/chat.js','/dock.css','/app.js','/paper.js','/shared.js','/ai-settings.js','/style.css','/reader.css','/favicon.svg'} or path.path.startswith('/vendor/'):
+            if path.path == '/' or re.fullmatch(rf'/paper/{PAPER_ID_RE}',path.path) or path.path in {'/dock','/dock.js','/literature-ui.js','/chat.js','/dock.css','/app.js','/paper.js','/shared.js','/ai-settings.js','/style.css','/reader.css','/favicon.svg'} or path.path.startswith('/vendor/'):
                 filename = 'index.html' if path.path == '/' else 'dock.html' if path.path == '/dock' else 'paper.html' if path.path.startswith('/paper/') else unquote(path.path).lstrip('/')
                 file = (ROOT / 'web' / filename).resolve()
                 if not file.is_relative_to((ROOT/'web').resolve()): raise ValueError('无效资源路径')
@@ -356,7 +360,7 @@ class Handler(BaseHTTPRequestHandler):
                     except (ValueError,AttributeError):message='Zotero 操作失败'
                     raise ValueError(message) from None
                 except OSError:raise ValueError('Zotero 插件未就绪，请安装并启用新版插件') from None
-            if self.path == '/api/zotero/register':return self.js(self.server.zotero.register(payload))
+            if self.path == '/api/zotero/register':return self.js(self.server.zotero.register_parent(payload))
             if self.path == '/api/zotero/sync':return self.js(self.server.zotero.sync_reports())
             if self.path == '/api/zotero/open':
                 pid=str(payload.get('paper_id',''))
@@ -376,6 +380,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.js({'ok':True,'message':'已打开 OpenAI 官方登录页，请完成登录和授权'})
             if self.path == '/api/ai/account':return self.js(self.server.chatgpt.select(payload.get('account')))
             if self.path == '/api/ai/logout':return self.js(self.server.chatgpt.logout(payload.get('account')))
+            if self.path == '/api/literature/search':return self.js(self.server.literature.search(**payload))
+            if self.path == '/api/literature/import':return self.js(self.server.literature.start(payload.get('candidate_ids'),payload.get('fetch_pdf',True)),202)
+            cancel_literature=re.fullmatch('/api/literature/tasks/([a-f0-9]{32})/stop',self.path)
+            if cancel_literature:return self.js(self.server.literature.cancel(cancel_literature[1]))
             if self.path == '/api/projects/import':return self.js(self.server.projects.bind().import_file(payload.get('path'),payload.get('data')))
             archive=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/chat/archive',self.path)
             if archive or self.path=='/api/workspace/chat/archive':return self.js((self.server.chat if archive else self.server.workspace_chat).archive(archive[1] if archive else 'workspace',payload))
@@ -484,6 +492,8 @@ def main():
     server.chat = PaperChat(server.papers,atomic,render_markdown,server.vault,server.projects,lambda payload:native_action(ROOT,server.papers,payload))
     server.workspace_chat = PaperChat(WorkspaceContext(server.papers),atomic,render_markdown,server.vault,server.projects,lambda payload:native_action(ROOT,server.papers,payload))
     server.zotero = ZoteroStorage(server.papers,args.zotero_storage)
+    server.literature=LiteratureService(args.config/'literature',atomic,lambda payload:native_action(ROOT,server.papers,payload),server.zotero.register_parent)
+    server.chat.literature=server.workspace_chat.literature=server.literature
     server.dock = DockBridge()
     atomic(args.state, json.dumps({'app': 'research-notebook', 'pid': os.getpid(), 'port': server.server_port, 'key': server.key, 'started': now()}))
     server.serve_forever()

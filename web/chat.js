@@ -23,7 +23,7 @@ var ResearchChat=(()=>{
   let paper=null,conversation={version:'0',messages:[]},run=0,controller=null,loading=false;
   const drafts=new Map(),selectionContexts=new Map(),historyOpen=new Map();
   const base=pid=>pid==='workspace'?'/api/workspace':'/api/papers/'+pid;
-  const actionNames={create_note:'已新建',update_note:'已编辑',delete_note:'已移入回收站',restore_note:'已恢复',create_project_file:'已新建文件',update_project_file:'已修改文件',trash_project_file:'已移入可恢复记录',restore_project_file:'已恢复文件',add_paper_tags:'已添加标签',remove_paper_tags:'已移除标签'};
+  const actionNames={import_literature:'已启动文献入库',create_note:'已新建',update_note:'已编辑',delete_note:'已移入回收站',restore_note:'已恢复',create_project_file:'已新建文件',update_project_file:'已修改文件',trash_project_file:'已移入可恢复记录',restore_project_file:'已恢复文件',add_paper_tags:'已添加标签',remove_paper_tags:'已移除标签'};
   const status=(text,error=false)=>{$('chat-status').textContent=text;$('chat-status').classList.toggle('chat-error',error);};
   function stop(){run++;controller?.abort();controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}
   function button(text,action){const b=document.createElement('button');b.type='button';b.textContent=text;b.onclick=action;return b;}
@@ -63,7 +63,7 @@ var ResearchChat=(()=>{
     for(const row of rows.slice(-15).reverse()){
       const card=document.createElement('div');card.className='note-action-card';
       const label=document.createElement('span');label.textContent=actionNames[row.action]+' · '+row.title;
-      card.append(label);if(!row.kind)card.append(button('打开笔记',()=>document.dispatchEvent(new CustomEvent('research-open-note',{detail:{note_id:row.note_id}}))));if(row.kind==='project'&&row.history_id){const b=button('复制恢复编号',()=>navigator.clipboard.writeText(row.history_id));card.append(b);}
+      card.append(label);if(row.kind==='literature')card.append(button('查看入库进度',()=>document.dispatchEvent(new CustomEvent('research-literature-task',{detail:{task_id:row.task_id}}))));if(!row.kind)card.append(button('打开笔记',()=>document.dispatchEvent(new CustomEvent('research-open-note',{detail:{note_id:row.note_id}}))));if(row.kind==='project'&&row.history_id){const b=button('复制恢复编号',()=>navigator.clipboard.writeText(row.history_id));card.append(b);}
       if(['delete_note','trash_project_file'].includes(row.action)&&[...rows].reverse().find(r=>r.note_id===row.note_id)?.id===row.id)card.append(button('恢复',async()=>{try{const data=await api(base(paper.id)+'/note-actions/restore',{action_id:row.id});conversation.recent_actions=data.recent_actions;renderActions();document.dispatchEvent(new CustomEvent('research-note-action',{detail:data}));status('笔记已恢复');}catch(e){status(e.message,true);}}));
       $('note-action-list').append(card);
     }
@@ -112,9 +112,10 @@ var ResearchChat=(()=>{
         if(event.type==='source'){status(event.notes_only?'正在处理任务…':'已读取 '+event.pages+' 页 PDF 文字层，其中 '+event.readable_pages+' 页有文字'+(event.source_changed?'；附件已更换，本次使用新上下文':'')+' · 正在回答…');if(event.notes_only)output.textContent='正在处理任务…';}
         if(event.type==='delta'){text+=event.text;previewDirty=true;if(!previewTimer&&!previewBusy)previewTimer=setTimeout(preview,layout.rendered?160:0);}
         if(event.type==='phase'){phaseEpoch++;text='';layout.keys=[];output.textContent=event.text;}
-        if(event.type==='tool_status')status(({search_notes:'正在查找笔记',read_note:'正在读取笔记',create_note:'正在新建笔记',update_note:'正在编辑笔记',delete_note:'正在移入回收站',restore_note:'正在恢复笔记',append_note:'正在追加笔记',web_search:'正在联网搜索',read_web_page:'正在核对网页来源'}[event.name]||'正在处理任务')+'…');
+        if(event.type==='tool_status')status(({search_notes:'正在查找笔记',read_note:'正在读取笔记',create_note:'正在新建笔记',update_note:'正在编辑笔记',delete_note:'正在移入回收站',restore_note:'正在恢复笔记',append_note:'正在追加笔记',web_search:'正在联网搜索',read_web_page:'正在核对网页来源',search_literature:'正在检索学术文献',import_literature:'正在启动后台入库',literature_task:'正在读取入库进度'}[event.name]||'正在处理任务')+'…');
         if(event.type==='tool_error')status(event.error,true);
         if(event.type==='note_action'){
+
           conversation.recent_actions=conversation.recent_actions||[];
           if(!conversation.recent_actions.some(r=>r.id===event.id))conversation.recent_actions.push(event);
           renderActions();status(actionNames[event.action]+' · '+event.title);document.dispatchEvent(new CustomEvent('research-note-action',{detail:event}));

@@ -17,6 +17,20 @@ class ZoteroStorage:
         self.papers=papers
         self.storage=Path(storage).resolve()
 
+    def register_parent(self,payload):
+        if payload.get('attachment_key') and payload.get('path'):return self.register(payload)
+        library=payload.get('library_id');key=payload.get('item_key');title=str(payload.get('title','')).strip()[:1000]
+        if type(library)!=int or library<1 or not re.fullmatch('[A-Z0-9]{8}',str(key)) or not title:raise ValueError('Zotero 父条目信息无效')
+        record_doi=doi(payload.get('doi',''))
+        with self.papers.lock:
+            ref=next((r for r in self.papers.refs.values() if r.get('zotero',{}).get('library_id')==library and r['zotero'].get('item_key')==key),None)
+            if ref is None:ref=next((r for r in self.papers.refs.values() if record_doi and doi(r.get('url',''))==record_doi),None)
+            if ref is None:
+                pid=f'Z{library}_{key}';ref={'id':pid,'topic':0,'title':title,'author':str(payload.get('author',''))[:1000],'year':str(payload.get('year',''))[:40],'venue':str(payload.get('venue',''))[:300],'url':'https://doi.org/'+record_doi if record_doi else str(payload.get('url',''))[:2000],'type':'待核读','relation':'Zotero 文献','innovation':'尚未核读全文。','boundary':'仅保存题录不代表已取得或阅读全文。','access':'题录已保存，全文待获取'};self.papers.refs[pid]=ref
+            if not ref.get('zotero',{}).get('path'):ref['zotero']={'library_id':library,'item_key':key,'attachment_key':'','path':''}
+            self.papers.atomic(self.papers.root/'catalog.json',json.dumps(list(self.papers.refs.values()),ensure_ascii=False,indent=2))
+            return {'id':ref['id'],'title':ref['title'],'attachment_key':ref['zotero'].get('attachment_key',''),'pdf_source':'题录已入库，全文待获取'}
+
     def valid_pdf(self, path, attachment_key):
         if not re.fullmatch('[A-Z0-9]{8}',str(attachment_key)):
             raise ValueError('无效的 Zotero 附件 key')
@@ -38,7 +52,7 @@ class ZoteroStorage:
         record_doi=doi(payload.get('doi',''))
         with self.papers.lock:
             matches=[r for r in self.papers.refs.values() if (record_doi and doi(r.get('url',''))==record_doi) or (normalized_title(r['title'])==normalized_title(title) and (not record_doi or not doi(r.get('url','')).startswith('10.') or doi(r.get('url',''))==record_doi))]
-            existing=[r for r in self.papers.refs.values() if r.get('zotero',{}).get('attachment_key')==att and r['zotero'].get('library_id')==library]
+            existing=[r for r in self.papers.refs.values() if r.get('zotero',{}).get('library_id')==library and (r['zotero'].get('attachment_key')==att or r['zotero'].get('item_key')==parent)]
             ref=(existing or matches or [None])[0]
             if ref is None:
                 pid=f'Z{library}_{att}'

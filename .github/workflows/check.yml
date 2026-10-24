@@ -22,5 +22,7 @@ jobs:
           }
       - name: Test content separation and operations
         run: python -m unittest discover -s tests
+      - name: Test native import adapter
+        run: node tests/test_literature_native.cjs
       - run: python tools/bootstrap.py --assets-only
       - run: python build_zotero_plugin.py

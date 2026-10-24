@@ -35,6 +35,7 @@ class PaperLibrary:
         ref=self.item(pid)
         linked=ref.get('zotero')
         if linked:
+            if not linked.get('path'):return None
             path=Path(linked['path'])
             if not path.is_file():raise ValueError('Zotero PDF 已移动或未下载，请在 Zotero 中打开附件后重新点击精读')
             return path

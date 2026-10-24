@@ -100,7 +100,7 @@ var ResearchNotebookPlugin={
     const check=async()=>{
       try{const state=await IOUtils.readJSON(this.path('.runtime','state.json'));
         const response=await Zotero.HTTP.request('GET',`http://127.0.0.1:${state.port}/health`,{responseType:'json',timeout:1200});
-        if(response.response.app==='research-notebook'&&response.response.version>=15)return state;
+        if(response.response.app==='research-notebook'&&response.response.version>=17)return state;
       }catch(_){}return null;
     };
     let state=await check();if(state)return state;
@@ -153,12 +153,15 @@ var ResearchNotebookPlugin={
     return attachment;
   },
   async registerSelected(win,reader){
-    const att=await this.selectedAttachment(win,reader),path=await att.getFilePathAsync();
-    if(!path)throw new Error('附件尚未下载，请先在 Zotero 中打开 PDF');
-    const parent=att.parentItemID?Zotero.Items.get(att.parentItemID):att;
+    let item=reader?Zotero.Items.get(reader.itemID):win.ZoteroPane.getSelectedItems()[0];
+    if(!item)throw new Error('请先选择文献条目');
+    let att=item.isAttachment?.()&&item.attachmentContentType==='application/pdf'?item:null;
+    const parent=item.parentItemID?await Zotero.Items.getAsync(item.parentItemID):item;
+    if(!att&&parent.isRegularItem?.()){const best=await parent.getBestAttachment();if(best?.attachmentContentType==='application/pdf')att=best;}
+    if(!att&&!parent.isRegularItem?.())throw new Error('请选择文献或 PDF');
+    const path=att?await att.getFilePathAsync():'';
     const field=name=>{try{return parent.getField(name)||'';}catch(_){return '';}};
-    const record=await this.request('/api/zotero/register',{library_id:att.libraryID,item_key:parent.key,attachment_key:att.key,path,title:field('title'),doi:field('DOI'),year:field('date'),venue:field('publicationTitle'),url:field('url'),author:parent.getCreators().map(c=>c.lastName||c.name||'').filter(Boolean).join(', ')});
-    return record;
+    return this.request('/api/zotero/register',{library_id:parent.libraryID,item_key:parent.key,attachment_key:path?att.key:'',path:path||'',title:field('title'),doi:field('DOI'),year:field('date'),venue:field('publicationTitle'),url:field('url'),author:parent.getCreators().map(c=>c.lastName||c.name||'').filter(Boolean).join(', ')});
   },
   async openSelected(win,reader){
     const record=await this.registerSelected(win,reader);return this.openPage(record.id,reader?._window||win);
@@ -192,11 +195,19 @@ var ResearchNotebookPlugin={
     return dock;
   },
   async nativeAction(data){
+    if(data.action==='literature_capabilities')return ResearchNotebookLiterature.capabilities();
+    if(data.action==='literature_import')return ResearchNotebookLiterature.save(data);
     if(data.action==='ui_status')return this.uiStatus();
-    if(!/^[A-Z0-9]{8}$/.test(data.attachment_key||'')||!Number.isInteger(data.library_id)||data.library_id<1)throw new Error('附件信息不合法');
-    const att=await Zotero.Items.getByLibraryAndKeyAsync(data.library_id,data.attachment_key);
-    if(!att?.isAttachment()||att.attachmentContentType!=='application/pdf')throw new Error('没有找到 PDF 附件');
-    const parent=att.parentItemID?await Zotero.Items.getAsync(att.parentItemID):null;
+    if(!Number.isInteger(data.library_id)||data.library_id<1)throw new Error('资料库信息不合法');
+    let att,parent;
+    if(/^[A-Z0-9]{8}$/.test(data.attachment_key||'')){
+      att=await Zotero.Items.getByLibraryAndKeyAsync(data.library_id,data.attachment_key);
+      if(!att?.isAttachment()||att.attachmentContentType!=='application/pdf')throw new Error('没有找到 PDF 附件');
+      parent=att.parentItemID?await Zotero.Items.getAsync(att.parentItemID):null;
+    }else if(/^[A-Z0-9]{8}$/.test(data.item_key||'')){
+      parent=await Zotero.Items.getByLibraryAndKeyAsync(data.library_id,data.item_key);
+      if(!parent?.isRegularItem()||parent.deleted)throw new Error('没有找到文献条目');att=parent;
+    }else throw new Error('文献信息不合法');
     if(['get_tags','add_paper_tags','remove_paper_tags'].includes(data.action)){
       const item=parent||att;
       const snapshot=()=>({tags:item.getTags().map(t=>t.tag).sort(),version:JSON.stringify(item.getTags().map(t=>[t.tag,t.type||0]).sort())});
@@ -206,6 +217,7 @@ var ResearchNotebookPlugin={
       return {ok:true,...snapshot()};
     }
     if(data.action==='open_pdf'){
+      if(!att?.isAttachment?.())throw new Error('本文献尚未取得 PDF，请先获取全文');
       if(data.page!=null&&(!Number.isInteger(data.page)||data.page<1))throw new Error('PDF 页码不合法');
       await Zotero.Reader.open(att.id,data.page?{pageIndex:data.page-1}:undefined);return {ok:true};
     }
