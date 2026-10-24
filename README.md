@@ -121,3 +121,7 @@ CI 检查 Python/JavaScript 语法、固定版本的 KaTeX 下载完整性与 XP
 进入“AI 助手”，在顶部直接选择模型和推理等级，选择后自动保存，下一次提问生效。模型和可用等级从已登录或已配置服务的模型目录读取；换模型会自动重置不兼容的等级。点击 ↻ 可刷新目录。当前正在生成的回答继续使用发起时的设置。划词翻译单独配置，保留快速模式。
 
 ChatGPT 通过 Responses 的 `reasoning.effort` 设置，DeepSeek 通过 `thinking` 与 `reasoning_effort` 设置；推理正文不展示为回答。接口说明：[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
+
+### 译文选词摘抄
+
+在 Zotero 翻译浮窗里选中词语或句子，点击“摘抄到笔记”。所选片段会追加到浮窗当前打开的仓库笔记并保存；未打开笔记时使用该论文的精读笔记。摘抄保留论文来源、PDF 页码和译文标记。可先在仓库打开其他目标笔记，再进行摘抄。版本冲突时保留草稿并提示处理，避免覆盖其他窗口的修改。

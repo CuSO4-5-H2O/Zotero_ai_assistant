@@ -226,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 12})
+        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 13})
         if path.path == '/auth/callback':
             import html
             try:message=self.server.chatgpt.callback({k:v[0] for k,v in parse_qs(path.query).items()});status=200

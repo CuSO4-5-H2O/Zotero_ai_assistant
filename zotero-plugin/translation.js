@@ -24,6 +24,7 @@ var ResearchNotebookTranslation={
     if(Observer){observer=new Observer(()=>{if(marker.isConnected)seen=true;else if(seen&&!protectedNow())close();});observer.observe(event.doc.documentElement,{childList:true,subtree:true});seen=marker.isConnected;}
     return ()=>{closed=true;observer?.disconnect();for(const remove of listeners)remove();marker.remove();};
   },
+  selectedText(output){const start=output.selectionStart,end=output.selectionEnd;return Number.isInteger(start)&&Number.isInteger(end)&&end>start?output.value.slice(start,end).trim():'';},
   dimensions(source,result,win){
     const length=Math.max(source.length,result.length*1.35),available=Math.max(180,(win?.innerWidth||1100)-40);
     const ideal=length<40?330:length<220?480:length<900?650:length<2400?780:900;

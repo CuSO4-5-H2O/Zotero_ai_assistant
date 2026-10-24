@@ -62,13 +62,14 @@
     const clipID=channel+':'+event.sequence;if(inserted.has(clipID))return;
     pendingClip=event;pendingClip.clipID=clipID;$('excerpt-inbox').hidden=false;$('excerpt-text').textContent=event.text;$('excerpt-source').textContent=event.paper_id+(event.page?' · PDF 第 '+event.page+' 页':'');
     if(!documentNote)await openPaper(event.paper_id);
-    insertClip();
+    if(!documentNote)return;showPane(documentNote.kind==='paper'?'current':'notes');
+    insertClip();if(event.autosave){const saved=await save();if(saved)status('选中内容已摘抄并保存 · 来源与页码已保留');}
   }
   function clipMarkdown(clip){
     const ref=catalog.find(r=>r.id===clip.paper_id),title=clip.title||ref?.title||clip.paper_id;
     const uri=clip.source_uri||(clip.attachment_key?'zotero://open-pdf/library/items/'+clip.attachment_key+(clip.page?'?page='+clip.page:''):'');
     const source=uri?'[来源：'+title.replace(/[\[\]]/g,'')+(clip.page?' · PDF 第 '+clip.page+' 页':'')+']('+uri+')':'来源：'+clip.paper_id+(clip.page?' · PDF 第 '+clip.page+' 页':'');
-    return '\n\n'+source+'\n\n'+clip.text.split(/\r?\n/).map(line=>'> '+line).join('\n')+'\n';
+    return '\n\n'+source+(clip.clip_kind==='translation'?'\n\n**译文摘抄**':clip.clip_kind==='summary'?'\n\n**总结摘抄**':'')+'\n\n'+clip.text.split(/\r?\n/).map(line=>'> '+line).join('\n')+'\n';
   }
   async function openContext(event){
     if(event.intent==='reports'){showPane('reports');return;}
