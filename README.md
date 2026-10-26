@@ -23,7 +23,7 @@ py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 ```
 
 1. 运行 `.\.runtime\python\pythonw.exe launcher.py` 启动本地服务。
-2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.1.xpi`。
+2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.2.xpi`。
 3. 点击右下角 **科研仓库** 或按 **Ctrl + Alt + N**；PDF 中点 **科研精读**。
 4. 在设置中配置自己的 AI 服务。未配置时仍可管理笔记和文件。
 

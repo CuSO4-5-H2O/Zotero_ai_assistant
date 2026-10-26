@@ -1,4 +1,4 @@
-ResearchNotebook 2.0.1 / 2026-10-26
+ResearchNotebook 2.0.2 / 2026-10-26
 Public framework regression results: 75 Python tests passed.
 
 test_invalid_channel_rejected_and_channels_bounded (research_bridge_tests.BridgeTests.test_invalid_channel_rejected_and_channels_bounded) ... ok
