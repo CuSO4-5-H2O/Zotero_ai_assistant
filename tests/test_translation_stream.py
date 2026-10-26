@@ -17,7 +17,7 @@ class Response:
 
 class StreamingTests(unittest.TestCase):
  def setUp(self):
-  self.temp=tempfile.TemporaryDirectory(dir='E:/ResearchNotebook_QA');self.path=Path(self.temp.name)/'settings.json';self.ds=DeepSeek(self.path,atomic)
+  self.temp=tempfile.TemporaryDirectory();self.path=Path(self.temp.name)/'settings.json';self.ds=DeepSeek(self.path,atomic)
   self.ds.save({'api_key':'test-only-not-real','model':'deepseek-flash'})
  def tearDown(self):self.temp.cleanup()
  def test_incremental_escape_and_only_translation(self):
