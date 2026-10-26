@@ -4,6 +4,10 @@ import hashlib,json,re,time,uuid
 def tool(name,description,properties,required):
     return {'type':'function','function':{'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':required,'additionalProperties':False}}}
 S={'type':'string'}
+def literal_note_content(question):
+    match=re.fullmatch(r'(?:(?:请帮我|帮我|请|麻烦)\s*)?(?:新建|创建)(?:一[个篇份]\s*)?笔记\s*[，,:：]\s*(?:输入|写入|内容为|内容是|正文为|正文是)\s*[:：]?\s*(.+)',question.strip(),re.S)
+    if not match or re.search(r'然后|同时|再(?:新建|创建|添加)|并(?:添加|创建|删除)',match[1]):return None
+    return match[1]
 TOOLS=[
     tool('search_notes','按关键词搜索仓库笔记或回收站。唯一匹配的短笔记会直接返回note正文和version，相当于已读取，可直接修改或删除。否则需read_note。',{'query':S,'trash':{'type':'boolean'}},['query']),
     tool('read_note','读取笔记正文、版本和状态。仓库笔记用UUID；当前论文精读用 current_paper。',{'note_id':S},['note_id']),
@@ -18,6 +22,7 @@ INSTRUCTIONS=('\n你已获用户授权，可根据用户当前要求直接管理
  '编辑/删除前先搜索并读取确定的目标，搜索唯一匹配时返回note已包含正文和版本，不要重复read_note。使用工具返回的ID和version；同名笔记不明确时询问用户，禁止猜选。'
  'current_paper指当前论文的精读笔记。创建笔记可用当前文献编号作标签。'
  '删除是可恢复移入回收站。编辑保留未要求改动的段落。工具失败时如实说明，不能声称成功。'
+ '用户明确要求输入、写入或内容为某段文字时，正文必须保留该文字，不擅自添加标题、解释或扩写。例如“新建一个笔记，输入测试”的正文应为“测试”。'
  '最终简短说明实际操作结果，完成后停止，不重复调用相同写入。')
 
 class NoteTools:
@@ -57,6 +62,9 @@ class NoteTools:
         if not isinstance(args,dict):return {'ok':False,'error':'工具参数必须为对象'}
         spec=next(t['function']['parameters'] for t in TOOLS if t['function']['name']==name)
         if set(args)-set(spec['properties']) or set(spec['required'])-set(args):return {'ok':False,'error':'工具参数缺失或包含未授权字段'}
+        if name=='create_note':
+            literal=literal_note_content(self.question)
+            if literal is not None:args={**args,'content':literal,'title':literal.splitlines()[0][:60] or args['title']}
         normalized={**args}
         if name=='create_note':normalized={**args,'folder':args.get('folder','文献笔记'),'tags':args.get('tags',[self.pid])}
         signature=json.dumps([name,normalized],ensure_ascii=False,sort_keys=True)

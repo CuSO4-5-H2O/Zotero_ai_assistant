@@ -4,7 +4,6 @@ import io
 import json
 from pathlib import Path
 import re
-import shutil
 import threading
 from pypdf import PdfReader
 
@@ -39,13 +38,6 @@ class PaperLibrary:
             path=Path(linked['path'])
             if not path.is_file():raise ValueError('Zotero PDF 已移动或未下载，请在 Zotero 中打开附件后重新点击精读')
             return path
-        own = self.folder(pid)/'source.pdf'
-        if own.exists(): return own
-        key = self.pdf_evidence.get(pid,{}).get('key')
-        original = self.source/'source_pdfs'/f'{key}.pdf'
-        if key and original.exists():
-            shutil.copy2(original, own)
-            return own
         return None
 
     def guide(self, pid):
@@ -74,12 +66,12 @@ class PaperLibrary:
     def get(self, pid):
         r = self.item(pid)
         guide = self.guide(pid)
-        return {**r,'guide':guide,'guide_html':self.render(guide),'guide_version':hashlib.sha256(guide.encode()).hexdigest(),'has_pdf':bool(self.pdf(pid)), 'reading':self.reading(pid),'pdf_source':'Zotero storage' if r.get('zotero') else '本地 PDF'}
+        return {**r,'guide':guide,'guide_html':self.render(guide),'guide_version':hashlib.sha256(guide.encode()).hexdigest(),'has_pdf':bool(self.pdf(pid)), 'reading':self.reading(pid),'pdf_source':'Zotero storage' if r.get('zotero',{}).get('attachment_key') else '尚未关联 PDF'}
 
     def pages(self, pid):
         with self.lock:
             pdf = self.pdf(pid)
-            if not pdf: return {'pages':[],'status':'missing','message':'尚未收录全文。可打开论文原文，获取 PDF 后导入本页。'}
+            if not pdf: return {'pages':[],'status':'missing','message':'尚未关联 PDF。获取全文后请导入到 Zotero storage。'}
             cache = self.folder(pid)/'pages.json'
             signature=f'{pdf.resolve()}:{pdf.stat().st_size}:{pdf.stat().st_mtime_ns}'
             if cache.exists():
@@ -100,28 +92,17 @@ class PaperLibrary:
             self.atomic(cache,json.dumps(result,ensure_ascii=False))
             return result
 
-    def upload(self, pid, payload):
-        with self.lock:
-            if self.item(pid).get('zotero'):raise ValueError('这篇文献已关联 Zotero 附件，请在 Zotero 中管理 PDF')
-            try: data=base64.b64decode(payload.get('data',''),validate=True)
-            except Exception: raise ValueError('PDF 数据无效') from None
-            if len(data)>32_000_000 or not data.startswith(b'%PDF-'): raise ValueError('请选择 32 MB 以内的 PDF 文件')
-            try:
-                reader=PdfReader(io.BytesIO(data))
-                if reader.is_encrypted and not reader.decrypt(''): raise ValueError()
-                if not 1<=len(reader.pages)<=1000: raise ValueError()
-            except Exception: raise ValueError('PDF 无法读取、受密码保护或页数超限') from None
-            folder=self.folder(pid)
-            old=folder/'source.pdf'
-            if old.exists():
-                history=folder/'sources';history.mkdir(exist_ok=True)
-                digest=hashlib.sha256(old.read_bytes()).hexdigest()[:16]
-                shutil.copy2(old,history/(digest+'.pdf'))
-            temp=folder/'source.pdf.tmp';temp.write_bytes(data);temp.replace(old)
-            cache=folder/'pages.json'
-            if cache.exists():cache.unlink()
-            self.atomic(folder/'source-info.json',json.dumps({'filename':str(payload.get('filename','导入 PDF'))[:200],'origin':'用户手动关联，请核对题名是否匹配'},ensure_ascii=False))
-            return {'ok':True}
+    def decode_pdf_upload(self, payload):
+        try: data=base64.b64decode(payload.get('data',''),validate=True)
+        except Exception: raise ValueError('PDF 数据无效') from None
+        if len(data)>32_000_000 or not data.startswith(b'%PDF-'): raise ValueError('请选择 32 MB 以内的 PDF 文件')
+        try:
+            reader=PdfReader(io.BytesIO(data))
+            if reader.is_encrypted and not reader.decrypt(''): raise ValueError()
+            pages=len(reader.pages)
+            if not 1<=pages<=1000: raise ValueError()
+        except Exception: raise ValueError('PDF 无法读取、受密码保护或页数超限') from None
+        return data, pages
 
     def save_reading(self, pid, payload):
         from datetime import datetime

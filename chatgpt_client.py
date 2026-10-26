@@ -181,7 +181,7 @@ class ChatGPT:
         if effort and effort not in selected.get('reasoning_levels',[]):raise ValueError('当前模型不支持所选推理等级，请重新选择')
         if not self.gate.acquire(False):raise ValueError('已有两个 ChatGPT 请求正在处理，请稍后重试')
         try:
-            body=self.body(messages,model,tools,effort);text='';completed=None
+            body=self.body(messages,model,tools,effort);text='';completed=None;output_items={}
             req=request.Request(RESOURCE+'/responses',data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'text/event-stream'})
             try:
                 with request.urlopen(req,timeout=45) as response:
@@ -193,6 +193,9 @@ class ChatGPT:
                             delta=event.get('delta','');text+=delta
                             if len(text)>100000:raise ValueError('回答过长，请缩小问题范围')
                             yield {'type':'delta','text':delta}
+                        elif kind=='response.output_item.done':
+                            index=event.get('output_index');item=event.get('item')
+                            if type(index) is int and isinstance(item,dict):output_items[index]=item
                         elif kind in {'response.failed','response.incomplete','error'}:
                             raise ProviderError((event.get('response',{}).get('error') or event.get('error') or event).get('code') or kind)
                         elif kind=='response.completed':completed=event['response'];break
@@ -202,7 +205,15 @@ class ChatGPT:
                 raise ProviderError(code or 'http_'+str(e.code)) from None
             except (TimeoutError,error.URLError):raise ValueError('连接 OpenAI 超时，请检查网络后重试') from None
             if not completed:raise ValueError('ChatGPT 回答连接中断，部分回答未保存，工具未执行')
-            calls=[];outputs=completed.get('output',[])
+            # Some streaming responses deliver the complete items only through
+            # output_item.done and leave response.completed.output empty.
+            # Retain those items, including reasoning needed for tool replay.
+            calls=[];outputs=[output_items[index] for index in sorted(output_items)]
+            for item in completed.get('output') or []:
+                key=item.get('id') or item.get('call_id')
+                previous=next((i for i,value in enumerate(outputs) if key and (value.get('id') or value.get('call_id'))==key),None)
+                if previous is None:outputs.append(item)
+                else:outputs[previous]=item
             for item in outputs:
                 if item.get('type')=='function_call':
                     if not tools or item.get('namespace') not in {None,'notebook'} or len(calls)>=8:raise ValueError('工具调用无效，未执行操作')

@@ -100,7 +100,7 @@ var ResearchChat=(()=>{
     const question=$('chat-question').value.trim();if(!question)return;
     const current=++run,pid=paper.id;controller=new AbortController();loading=true;$('send-chat').disabled=true;$('stop-chat').hidden=false;
     if(!conversation.messages.length)$('chat-messages').replaceChildren();
-    message('user',question);const output=message('assistant','正在处理…');let text='',done=false,buffer='',previewTimer=null,previewBusy=false,previewDirty=false,previewClosed=false,phaseEpoch=0;const layout={};output.classList.add('chat-streaming');
+    message('user',question);const output=message('assistant','正在处理…');let text='',done=false,buffer='',previewTimer=null,previewBusy=false,previewDirty=false,previewClosed=false,phaseEpoch=0,actionCount=0;const layout={};output.classList.add('chat-streaming');
     const preview=async()=>{previewTimer=null;if(previewBusy||current!==run||done||previewClosed)return;previewBusy=true;previewDirty=false;const snapshot=text,epoch=phaseEpoch;try{const data=await api('/api/preview',{content:snapshot});if(current===run&&!done&&!previewClosed&&epoch===phaseEpoch&&output.isConnected)ResearchChatStream.apply(output,data.html,layout);}catch(_){}finally{previewBusy=false;if(previewDirty&&current===run&&!done&&!previewClosed)previewTimer=setTimeout(preview,160);}};
     status('正在准备所需上下文…');
     try{
@@ -115,6 +115,7 @@ var ResearchChat=(()=>{
         if(event.type==='tool_status')status(({search_notes:'正在查找笔记',read_note:'正在读取笔记',create_note:'正在新建笔记',update_note:'正在编辑笔记',delete_note:'正在移入回收站',restore_note:'正在恢复笔记',append_note:'正在追加笔记',web_search:'正在联网搜索',read_web_page:'正在核对网页来源',search_literature:'正在检索学术文献',import_literature:'正在启动后台入库',literature_task:'正在读取入库进度'}[event.name]||'正在处理任务')+'…');
         if(event.type==='tool_error')status(event.error,true);
         if(event.type==='note_action'){
+          actionCount++;
 
           conversation.recent_actions=conversation.recent_actions||[];
           if(!conversation.recent_actions.some(r=>r.id===event.id))conversation.recent_actions.push(event);
@@ -125,9 +126,9 @@ var ResearchChat=(()=>{
       while(true){const part=await reader.read();if(part.done)break;buffer+=decoder.decode(part.value,{stream:true});const lines=buffer.split('\n');buffer=lines.pop();for(const line of lines)consume(line);}
       buffer+=decoder.decode();if(buffer.trim())consume(buffer);
       if(current!==run)return;if(!done)throw new Error('回答连接中断，部分内容未保存');
-      if($('chat-question').value.trim()===question){drafts.delete(pid);$('chat-question').value='';}conversation=await api(base(pid)+'/chat');if(current!==run)return;render(true);status('回答已保存到当前论文，可继续追问或追加到本文献笔记');
-    }catch(e){previewClosed=true;if(current===run){status(e.name==='AbortError'?'已停止，部分回答未保存':e.message,true);output.textContent=text||'本次未生成回答。';}}
-    finally{previewClosed=true;clearTimeout(previewTimer);if(current===run){controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}}
+      if($('chat-question').value.trim()===question){drafts.delete(pid);$('chat-question').value='';}conversation=await api(base(pid)+'/chat');if(current!==run)return;render(true);status(paper.id==='workspace'?'回答已保存到工作区对话，可继续追问或归档到工程':'回答已保存到当前论文，可继续追问或追加到本文献笔记');
+    }catch(e){previewClosed=true;if(current===run){const reason=e.name==='AbortError'?'已停止，部分回答未保存':e.message;status(reason,true);output.textContent=text?text+'\n\n'+reason:(actionCount?'部分操作已完成，请查看操作记录。\n':'')+reason;}}
+    finally{previewClosed=true;clearTimeout(previewTimer);output.classList.remove('chat-streaming');if(current===run){controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}}
   }
   $('chat-form').onsubmit=ask;
   $('stop-chat').onclick=()=>{stop();status('已停止；完整记录重新载入后可继续查看，部分回答未保存');};

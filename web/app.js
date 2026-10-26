@@ -1,9 +1,19 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const state = {doc:null, mode:'read', folder:'', trash:false, notes:[], folders:[], sequence:0, dirty:false, saving:null, blocked:false, searchRun:0, previewRun:0};
+state.starredOnly=false;
+const noteStarFilter=document.createElement('button');noteStarFilter.id='starred-only';noteStarFilter.className='star-filter';noteStarFilter.textContent='☆ 只看星标';noteStarFilter.setAttribute('aria-pressed','false');$('list-count').after(noteStarFilter);
+noteStarFilter.onclick=()=>{state.starredOnly=!state.starredOnly;noteStarFilter.textContent=state.starredOnly?'★ 仅星标':'☆ 只看星标';noteStarFilter.setAttribute('aria-pressed',String(state.starredOnly));renderNotes();};
+const editorStar=document.createElement('button');editorStar.id='star-note';editorStar.className='tool-button star-toggle';editorStar.disabled=true;$('history').before(editorStar);
+function syncEditorStar(){const ready=typeof state.doc?.starred==='boolean';editorStar.textContent=!ready?'☆ 星标待启用':state.doc?.starred?'★ 已置顶':'☆ 星标';editorStar.disabled=!state.doc||state.doc.trashed||!ready;editorStar.setAttribute('aria-pressed',String(!!state.doc?.starred));}
+async function setNoteStar(note){let result;try{result=await api('/api/favorites',{kind:'note',id:note.id,starred:!note.starred});}catch(error){if(error.status===404)throw new Error('星标功能需要重启本地科研笔记后台服务后启用；当前正文和草稿不受影响');throw error;}note.starred=result.starred;if(state.doc?.id===note.id){state.doc.starred=result.starred;syncEditorStar();}await refresh();}
+editorStar.onclick=async()=>{if(!state.doc)return;editorStar.disabled=true;try{await setNoteStar(state.doc);}catch(error){toast(error.message);}finally{syncEditorStar();}};
+syncEditorStar();
 let saveTimer, previewTimer, searchTimer, toastTimer;
 async function api(path, payload) {
-  const response = await fetch(path, payload === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json','X-Notebook-Request':'1'}, body:JSON.stringify(payload)});
+  let response;
+  try{response=await fetch(path, payload === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json','X-Notebook-Request':'1'}, body:JSON.stringify(payload)});}
+  catch(_){throw new Error('暂时无法连接本地科研笔记服务；请保留当前窗口和修改，恢复连接后再保存');}
   const body = await response.json();
   if (!response.ok) {const error = new Error(body.error || '操作失败'); error.status = response.status; throw error;}
   return body;
@@ -22,13 +32,14 @@ function renderFolders(data) {
     button.onclick=async()=>{if(!await persist())return;state.trash=item.value==='__trash';state.folder=state.trash?'':item.value;await refresh();document.querySelector('.workspace').classList.add('show-list');};return button;}));
 }
 function renderNotes() {
-  $('list-count').textContent=state.notes.length+' 篇';
+  const notes=state.notes.filter(n=>!state.starredOnly||n.starred);
+  $('list-count').textContent=notes.length+' 篇';
   $('list-title').textContent=state.trash?'回收站':state.folder||'全部文档';
-  if(!state.notes.length){const p=document.createElement('p');p.className='no-results';p.textContent=$('search').value?'没有找到匹配的笔记。可以换个关键词，或清空搜索。':state.trash?'回收站是空的。':'这个分类还没有笔记，点击“新建笔记”开始。';$('note-list').replaceChildren(p);return;}
-  $('note-list').replaceChildren(...state.notes.map(note=>{const button=document.createElement('button');button.className='note-item'+(state.doc?.id===note.id?' active':'');button.dataset.noteId=note.id;
+  if(!notes.length){const p=document.createElement('p');p.className='no-results';p.textContent=state.starredOnly?'没有匹配的星标笔记，点击笔记旁的 ☆ 可添加。':$('search').value?'没有找到匹配的笔记。可以换个关键词，或清空搜索。':state.trash?'回收站是空的。':'这个分类还没有笔记，点击“新建笔记”开始。';$('note-list').replaceChildren(p);return;}
+  $('note-list').replaceChildren(...notes.map(note=>{const shell=document.createElement('div');shell.className='note-item-shell'+(note.starred?' is-starred':'');shell.dataset.starKey='note:'+note.id;const button=document.createElement('button');button.className='note-item'+(state.doc?.id===note.id?' active':'');button.dataset.noteId=note.id;
     const title=document.createElement('div');title.className='note-title';title.textContent=note.title;
     const excerpt=document.createElement('div');excerpt.className='note-excerpt';excerpt.textContent=note.excerpt;
-    const bottom=document.createElement('div');bottom.className='note-bottom';const tag=document.createElement('span');tag.className='tag';tag.textContent=note.tags.map(t=>'#'+t).join(' ');const date=document.createElement('span');date.textContent=dateLabel(note.updated);bottom.append(tag,date);button.append(title,excerpt,bottom);button.onclick=()=>openNote(note.id);return button;}));
+    const bottom=document.createElement('div');bottom.className='note-bottom';const tag=document.createElement('span');tag.className='tag';tag.textContent=(note.starred?'★ 置顶 · ':'')+note.tags.map(t=>'#'+t).join(' ');const date=document.createElement('span');date.textContent=dateLabel(note.updated);bottom.append(tag,date);button.append(title,excerpt,bottom);button.onclick=()=>openNote(note.id);shell.append(button);if(!state.trash){const star=document.createElement('button');star.className='star-toggle';star.textContent=note.starred?'★':'☆';star.title=note.starred?'取消星标':'添加星标并置顶';star.setAttribute('aria-label',star.title+'：'+note.title);star.setAttribute('aria-pressed',String(!!note.starred));star.onclick=async event=>{event.stopPropagation();star.disabled=true;try{await setNoteStar(note);}catch(error){toast(error.message);}finally{star.disabled=false;}};shell.append(star);}return shell;}));
 }
 async function refresh() {
   const run=++state.searchRun;
@@ -47,6 +58,7 @@ function setMode(mode) {
 }
 function populate(doc) {
   state.doc=doc;state.dirty=false;state.blocked=false;state.sequence=0;
+  syncEditorStar();
   state.previousTitle=doc.title;
   $('empty-document').hidden=true;$('document-body').hidden=false;
   $('note-title').value=doc.title;$('note-tags').value=doc.tags.join(', ');fillFolders($('note-folder'),doc.folder);$('editor').value=doc.content;
@@ -102,6 +114,8 @@ $('save').onclick=async()=>{if(await persist(true))toast('已保存');};
 $('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>refresh().catch(e=>toast(e.message)),180);};
 $('preview').onclick=event=>{const link=event.target.closest('[data-open]');if(link){event.preventDefault();if(link.dataset.open.startsWith('report:'))location.href='/dock?pane=reports';else openNote(link.dataset.open);}};
 window.addEventListener('research-notes-changed',()=>refresh().catch(e=>toast(e.message)));
+const appendedSelections=new Set();
+document.addEventListener('research-append-selection',event=>{const detail=event.detail;if(state.doc?.id!==detail.note_id||state.doc.trashed)return;detail.handled=true;detail.promise=(async()=>{if(!appendedSelections.has(detail.operation_id)){$('editor').value=$('editor').value.trimEnd()+'\n\n'+detail.content;appendedSelections.add(detail.operation_id);changed();}clearTimeout(saveTimer);if(!await persist())throw new Error('选文已加入草稿，保存未成功，请处理保存提示后重试');return {id:state.doc.id,title:state.doc.title};})();});
 window.addEventListener('focus',()=>refresh().catch(()=>{}));
 $('export-vault').onclick=async()=>{if(!await persist())return;const a=document.createElement('a');a.href='/api/export';a.download='科研笔记仓库.zip';a.click();};
 $('vault-location').onclick=async()=>{const info=await api('/api/info');$('vault-path').textContent=info.vault;$('info-dialog').showModal();};

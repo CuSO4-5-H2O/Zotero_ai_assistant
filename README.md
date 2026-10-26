@@ -1,163 +1,59 @@
-# Zotero AI Assistant
+# Zotero AI Assistant · 2.0
 
-面向 Zotero 的本地科研笔记与 AI 阅读助手。PDF 阅读器、笔记、划词翻译和工作区助手放在同一个 Zotero 窗口中。
+在 Zotero 原窗口中阅读 PDF、写 Markdown 笔记、划词翻译、总结和向 AI 提问。支持星标置顶、独立报告、工程文件、对话归档与在线文献检索。
 
-**这是空白基础框架。** 不包含已有笔记、报告、论文 PDF、文献目录、聊天记录、API Key、登录令牌、个人配置或独立 Python 运行环境。首次运行时在本机创建空仓库；AI 功能需要使用者自行配置服务。
+**空白基础框架：不含个人笔记、报告、PDF、文献目录、对话、API Key、登录凭据或 Python 运行环境。**
 
-## 功能
-
-- Zotero 主窗口固定仓库入口；在 PDF 标签页中也能打开。
-- 可拖动、缩放并记住布局的浮窗；支持重置位置和尺寸。
-- Markdown 笔记、公式预览、搜索、分类、标签、历史版本和回收站恢复。
-- 选中 PDF 文字后自动翻译；译文可编辑、复制或保存；支持总结选文。取消选区后自动关闭，编辑译文时保留窗口。
-- PDF 文字层问答、流式回答、连续追问、按论文隔离对话和页码引用。
-- 可选 AI 工具：新建、编辑、追加、删除与恢复笔记；管理 Zotero 文献标签；读写选定工程目录中的文本、代码和数据文件。
-- 可自行配置 DeepSeek；包含实验性的 ChatGPT 登录适配器，可用性取决于账号授权和服务支持。
-
-## 环境
-
-当前面向 **Windows、Python 3.12、Zotero 10.0.x**；原生接口在 Zotero 10.0.6 上核对。其他系统和 Zotero 大版本尚未验证。独立桌面窗口使用 Microsoft Edge。
+[图文使用说明](docs/使用说明.md) · [离线 HTML 说明书](docs/使用说明.html) · [验收记录与已知限制](docs/2.0验收记录.md)
 
 ## 安装
 
-1. 克隆源码：
-
-   ```powershell
-   git clone https://github.com/CuSO4-5-H2O/Zotero_ai_assistant.git
-   cd Zotero_ai_assistant
-   ```
-
-2. 创建本机运行环境、下载公式字体、构建插件：
-
-   ```powershell
-   py -3.12 tools/bootstrap.py
-   ```
-
-   如果 Zotero 的 `storage` 不在用户目录的 `Zotero/storage` 下，显式指定：
-
-   ```powershell
-   py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
-   ```
-
-   安装脚本会下载 `requirements.txt` 中的依赖及固定版本的 KaTeX。依赖、字体和本机配置存放在忽略目录中，不写入 Git 历史。
-
-3. 启动本地应用：
-
-   ```powershell
-   .\.runtime\python\pythonw.exe launcher.py
-   ```
-
-4. 在 Zotero 的 **工具 → 插件 → 齿轮 → 从文件安装插件** 中安装 `dist/research-notebook-1.6.6.xpi`。插件需要配套的本地 Python 服务，不能只复制 XPI 到另一台电脑使用。
-
-5. 点击 Zotero 右下角的 **科研仓库**，或使用 `Ctrl+Alt+N`。在 PDF 中点击 **科研精读** 关联当前论文。
-
-安装脚本构建的本机 XPI 会记录当前源码目录。移动目录后，请重新构建并安装：
+需要 **Windows、Python 3.12、Zotero 10.0.x**。原生接口在 Zotero 10.0.6 验证；独立桌面入口使用 Microsoft Edge。其他系统和 Zotero 大版本未验证。
 
 ```powershell
-py -3.12 build_zotero_plugin.py --embed-root
+git clone https://github.com/CuSO4-5-H2O/Zotero_ai_assistant.git
+cd Zotero_ai_assistant
+py -3.12 tools/bootstrap.py
 ```
 
-也可以在 Zotero 高级配置编辑器中设置 `extensions.researchnotebook.root` 为源码目录的绝对路径。该设置优先于构建时记录的目录。
-
-## AI 设置与数据
-
-在仓库中的 **设置 → AI 与工程设置** 配置自己的服务；助手与翻译可以分别选择服务。未配置服务时仍可管理本地笔记。首次 ChatGPT 登录需要本人在官方页面完成登录与授权，不会读取其他应用的登录文件。
-
-- `vault/`：笔记、关联文献目录、文字提取结果、历史与对话。
-- `projects/`：默认工程目录，可在设置中改为另一个明确的工程目录。
-- `.runtime/`：本机运行环境、服务状态、缓存、配置及 Windows DPAPI 加密凭据。
-- `dist/`：本机生成的插件和本地更新描述。
-
-以上目录均默认排除在 Git 之外。不要把自己的运行目录、导出仓库或配置文件提交到公开仓库。
-
-AI 请求会将本次需要的选文、PDF 文字或笔记/工程文件内容发送给使用者选择的模型服务。只有划词翻译会发送当前选文；PDF 问答会发送当前 PDF 文字层及必要对话上下文。代码与文档中的接口地址不是 API Key，本项目不提供任何共享账号或额度。
-
-## 操作范围与局限
-
-- 后端只监听 `127.0.0.1`，本地请求使用会话校验。
-- 通过 Zotero 原生接口读取附件路径、管理条目标签和子笔记；不直接修改 `zotero.sqlite`。
-- 工程工具只读写用户所选目录中的允许文本格式；编辑检查版本并保留历史，删除可恢复，不执行系统命令，不直接修改二进制仿真工程。
-- PDF 问答当前处理文字层，扫描件不提供 OCR；图表图像与复杂公式需核对原文。AI 页码和结论也需要人工核验。
-- 本地更新器只检查当前安装目录中自行生成的 `dist/latest.json`。保留域名 `research-notebook.invalid` 不提供互联网更新服务。
-- 导出仓库可能包含笔记、关联信息和本地导入的 PDF，分享前请检查内容和文献版权。
-
-## 代码结构
-
-| 目录或模块 | 作用 |
-| --- | --- |
-| `zotero-plugin/` | Zotero 入口、浮窗、划词界面、本地更新 |
-| `web/` | 笔记编辑器、阅读页面、助手界面和设置 |
-| `server.py` | 本地 HTTP 服务、笔记仓库与鉴权 |
-| `paper_library.py`, `zotero_source.py` | 关联 PDF、文字提取和文献元数据 |
-| `paper_chat.py`, `research_tools.py` | 对话与受限工作区工具 |
-| `deepseek_client.py`, `chatgpt_client.py`, `ai_service.py` | 可配置模型适配层 |
-| `project_files.py` | 工程文本文件、版本检查和恢复 |
-| `tools/bootstrap.py` | 本机初始化与依赖资源下载 |
-
-## 开发检查
+Zotero 的 storage 不在用户目录时，请指定实际位置，例如：
 
 ```powershell
-py -3.12 -m compileall -q .
-node --check web/dock.js
-node --check zotero-plugin/notebook.js
-py -3.12 build_zotero_plugin.py
+py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 ```
 
-CI 检查 Python/JavaScript 语法、固定版本的 KaTeX 下载完整性与 XPI 构建；不等同于 Zotero 原生界面验收。提交前检查 `git diff --cached`，避免将运行数据混入源码。
+1. 运行 `.\.runtime\python\pythonw.exe launcher.py` 启动本地服务。
+2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.1.xpi`。
+3. 点击右下角 **科研仓库** 或按 **Ctrl + Alt + N**；PDF 中点 **科研精读**。
+4. 在设置中配置自己的 AI 服务。未配置时仍可管理笔记和文件。
 
-## 许可证
+脚本下载固定版本依赖和 KaTeX、校验公式资源完整性，并生成匹配当前目录的本机插件。**单独复制 XPI 不能代替配套应用安装。** 移动目录后运行 `py -3.12 build_zotero_plugin.py --embed-root`，重新安装生成的包。
 
-框架源码使用 [MIT License](LICENSE)。第三方组件分别遵循其许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## 功能与数据
 
+- 文献笔记、文献导读、报告独立保存。摘录默认追加到当前论文笔记，也可选已有或新建笔记。
+- 划词自动翻译、可编辑译文、选词摘抄、总结；取消选区后关闭，编辑译文期间保留。
+- 笔记和报告支持星标置顶；历史、冲突保护及可恢复删除。
+- AI 助手支持模型和推理等级、PDF 问答、笔记和工程操作、文献标签、网页搜索、对话删除撤销和归档。
+- Crossref 检索无需 Key；Elicit 需要自己的 API 权限与 Key。搜索后可自动获取 PDF 并入库；重复 DOI 优先复用，缺失原文如实显示。
+- 普通导入默认加入左侧 storage 分类；PDF 由 Zotero 托管到其实际数据目录的 storage。
 
-### 对话管理与输出规范
+服务只监听 `127.0.0.1`。笔记在 `vault/`、报告在 `reports/`、配置与加密凭据在 `.runtime/`，工程目录可另选。导出仓库不含 Zotero 原 PDF、工程文件和密钥，迁移时分别备份。
 
-- 每条消息右上角“删除本轮”会删除对应的一问一答；“清空对话”需再次点击确认，作用于当前论文或工作区。可通过“撤销删除”恢复，删除的内容不再进入 AI 上下文；本机保留恢复快照。
-- 默认规范在每轮请求中生效，适用于所有已配置模型：中文简洁回答、区分文献与推断、引用 PDF 页码、以工具回执为准。规范位于 `assistant_rules.py`，修改后重启本地服务生效。
-- 公式优先使用 `$...$` 和独立成行的 `$$...$$`；支持分式、矩阵与 aligned 多行推导，并兼容 `\(...\)`、`\[...\]`。回答生成中提供公式预览，结束后统一排版。模型输出的 LaTeX 仍须符合 KaTeX 语法。
+## 更新与限制
 
-### 在助手中切换模型与推理等级
+更新源码和依赖后，运行 `py -3.12 build_zotero_plugin.py --embed-root`。插件核对本机 `dist/latest.json` 的版本、ID、兼容性和 SHA-256 后更新；可从 Zotero 工具菜单手动检查。**当前不自动从 GitHub 下载新版。** 更新后台代码后，先保存草稿，再重启本地服务。
 
-进入“AI 助手”，在顶部直接选择模型和推理等级，选择后自动保存，下一次提问生效。模型和可用等级从已登录或已配置服务的模型目录读取；换模型会自动重置不兼容的等级。点击 ↻ 可刷新目录。当前正在生成的回答继续使用发起时的设置。划词翻译单独配置，保留快速模式。
+扫描 PDF 需要外部 OCR。Undermind 目前采用网页搜索后粘贴 DOI 导入，尚无插件内一键账号连接。Elicit 网页登录不等于本插件 API 权限。全文下载受出版社、机构权限和网络限制，不保证全部成功。ChatGPT 登录适配器为实验能力，Plus 订阅不等于通用 API 额度。
 
-ChatGPT 通过 Responses 的 `reasoning.effort` 设置，DeepSeek 通过 `thinking` 与 `reasoning_effort` 设置；推理正文不展示为回答。接口说明：[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
+AI 调用会将相关选文、PDF 文字或工具读取内容发送给所选服务；联网搜索会发送查询词。回答和页码需要对照原文。
 
-### 译文选词摘抄
+## 开发与验证
 
-在 Zotero 翻译浮窗里选中词语或句子，点击“摘抄到笔记”。默认追加并保存到这篇文献唯一的本文献笔记，保留论文来源和 PDF 页码。“加入本文笔记”保存完整译文或总结；明确点击“新建”才创建独立笔记。
+```powershell
+.\.runtime\python\python.exe -m unittest discover -s tests -p '*tests.py' -v
+.\.runtime\python\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+node tests/test_literature_native.cjs
+```
 
-### 流式回答显示
-
-生成时保留已完成的排版内容，只替换变化的尾部内容，公式在插入页面前排版；滚动条预留固定空间，避免窗口宽度随内容变化。处于底部时跟随新内容，向上阅读时保留当前位置。
-
-### 从翻译窗口向助手提问
-
-点击 Zotero 翻译窗口标题栏的 ✧ 按钮，在同一窗口中打开 AI 助手。选中了译文或总结时带入选中片段；未选中时带入原始 PDF 选文。助手会显示选文类型与页码，输入问题后再发送，不会自动调用模型。点击选文卡片的 × 可移除选文，问题草稿保留；已发送的对话可展开查看当轮选文。
-
-
-### 1.8.0 分区与操作
-
-- **文献导读**：独立的阅读指引与 AI 精读结果；生成导读不会写入个人笔记。
-- **文献笔记**：每篇文献一个默认笔记，译文、摘抄和 AI 回答追加到这里。
-- **仓库笔记**：搜索文献笔记与独立笔记；报告不在这里。
-- **已有报告**：报告使用独立 `reports/` 目录和索引。旧版本“调研报告”分类会自动迁移，原件备份到 `.runtime/migrations/layout-v1/`；无法可靠识别的混合正文保留，不猜测删除。
-- **工程文件**：导入文件和图片（单个20MB以内），预览常见图片，下载其他文件；可直接将大文件放入所选工程目录。助手编辑 UTF-8 文本并保留历史。
-- **对话归档**：助手顶部“归档到工程”保存完整 Markdown 对话到工程内 `AI对话/`，不会生成笔记。超过10轮自动折叠较早内容，保留最近6轮，点击可恢复显示；完整历史继续保存在本机，发送模型的上下文仍按大小限制。
-- **助手操作**：每轮均提供已授权的笔记、文件、标签与联网工具，不再依赖关键词启用。可以说“把上段加入当前笔记”“查找某篇笔记并删除”；删除可恢复，修改需读取版本。
-- **联网**：提供公开网页搜索与正文提取，返回来源链接；不需要另填搜索 API Key。当前使用 Bing RSS 公共搜索入口，可能受限或发生变化；登录墙、反爬与扫描 PDF 正文不保证可读取。检索词发送搜索服务，读取的网页证据会提供给当前模型；不会自动发送整本笔记库。
-- **浮窗**：标题栏拖动只处理插件浮窗，边缘/角落缩放；↺ 重置位置尺寸。写入 Zotero 时复用插件所拥有的同一篇子笔记，检测到外部修改会提示对照。
-
-开源仓库仍仅含基础框架，不含个人笔记、报告、PDF、对话、运行配置或 API Key。
-
-
-### 1.9.1 自动检索与 Zotero 入库
-
-在“文献搜索”顶部输入主题、题名或 DOI，可按起止年份检索，每次最多20个候选；勾选后点击“导入所选并获取 PDF”。候选来自 Crossref 题录和可用摘要，结果需按相关性筛选，中文和未登记 DOI 的文献可能遗漏。
-
-也可在 AI 助手说：“检索2023年以来关于可编程超表面神经网络的5篇相关论文，筛选后加入 Zotero 并尝试获取全文。”助手会调用在线检索和后台入库工具；单说搜索时只检索，不自动导入。无需另填学术检索 API Key；检索条件会发送 Crossref，模型参与条件理解和候选筛选，检索与 PDF 获取本身不调用大模型。
-
-条目保存在个人 Zotero 库的“科研助手导入”分类下，按 DOI 去重，已有元数据不覆盖。PDF 由 Zotero 附件接口写入用户已配置的 storage；已有 PDF 优先复用，链接型 PDF 会复制为受管理附件。无 PDF 时保留题录和对应文献笔记，取得 PDF 后沿用同一篇笔记。
-
-来源优先使用题录附带 PDF 地址、Zotero 的 DOI/出版页/开放获取和用户现有自定义解析器。已有 Sci-PDF 所注册的解析器可在这条流程中生效，不需要复制其源码；未调用其独立下载器，未集成茉莉花的元数据任务。登录、验证码及来源无收录都可能导致未取得全文，不能保证每篇均能下载。
-
-入库后台执行，不阻塞助手继续提问。“查看入库进度”或“最近入库任务”显示每篇结果及三项统计：题录入库、PDF 可用、本次获取。停止后续导入会保留已完成内容，当前文献的请求可能继续完成。重启中断的任务不会盲目自动重跑，可重新发起并去重。
+测试使用隔离目录；凭据测试使用 Windows DPAPI。截图为独立示例仓库。版本见 `VERSION`，许可证：[MIT](LICENSE)。

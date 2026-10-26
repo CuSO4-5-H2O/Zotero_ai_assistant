@@ -5,8 +5,8 @@ from web_tools import web_search,read_web_page
 from note_tools import NoteTools,TOOLS,INSTRUCTIONS,tool,S
 
 EXTRA=[
- tool('search_literature','在线学术检索题名、关键词或DOI，返回已核验的candidate_id。不是本地仓库搜索；相关性须按用户要求判断。',{'query':S,'limit':{'type':'integer','minimum':1,'maximum':20},'from_year':{'type':'integer'},'until_year':{'type':'integer'}},['query']),
- tool('import_literature','仅在用户要求保存或下载文献时，将检索结果加入Zotero并后台获取PDF。只接受search_literature返回的candidate_id；默认获取全文，不能把启动任务说成完成。',{'candidate_ids':{'type':'array','items':S,'minItems':1,'maxItems':20},'fetch_pdf':{'type':'boolean'}},['candidate_ids']),
+ tool('search_literature','按研究要求在线检索文献，返回真实candidate_id。支持Elicit语义检索和Crossref；auto在Elicit已配置时优先使用它。相关性须按要求筛选。',{'query':S,'limit':{'type':'integer','minimum':1,'maximum':20},'from_year':{'type':'integer'},'until_year':{'type':'integer'},'provider':{'type':'string','enum':['auto','crossref','elicit','combined']}},['query']),
+ tool('import_literature','仅在用户要求保存或下载文献时，将检索结果加入Zotero并后台获取PDF。只接受search_literature返回的candidate_id；默认获取全文，不能把启动任务说成完成。',{'candidate_ids':{'type':'array','items':S,'minItems':1,'maxItems':20},'fetch_pdf':{'type':'boolean'},'collection_name':S,'attachment_mode':{'type':'string','enum':['default','linked_codex']}},['candidate_ids']),
  tool('literature_task','查询文献入库进度或停止后续导入。停止不会强行中断当前文献请求。',{'task_id':S,'stop':{'type':'boolean'}},['task_id']),
  tool('web_search','联网检索公开网页，返回来源链接与摘要；最新消息、文献和需核实的问题应使用。',{'query':S},['query']),
  tool('read_web_page','读取搜索结果或用户给出的公开网页文字，引用须使用真实返回链接。',{'url':S},['url']),
@@ -23,7 +23,7 @@ EXTRA=[
  tool('restore_project_file','将删除记录中的文件恢复到原路径；目标已存在时不覆盖。',{'path':S,'history_id':S},['path','history_id'])]
 
 def native_action(root,papers,payload):
-    literature=payload.get('action')=='literature_import'
+    literature=payload.get('action') in {'literature_import','literature_design_note'}
     paper=None if literature else papers.item(payload['paper_id'])
     if paper is not None and not paper.get('zotero'):raise ValueError('该文献尚未关联 Zotero 条目')
     try:bridge=json.loads((root/'.runtime/zotero-bridge.json').read_text('utf-8'))
@@ -57,7 +57,7 @@ class ResearchTools(NoteTools):
             if name=='literature_task':return {'ok':True,'task':self.literature.cancel(args['task_id']) if args.get('stop') else self.literature.get(args['task_id'])}
             if name=='import_literature':
                 if self.writes>=8:raise ValueError('本轮任务操作次数过多')
-                job=self.literature.start(args['candidate_ids'],args.get('fetch_pdf',True))
+                job=self.literature.start(args['candidate_ids'],args.get('fetch_pdf',True),args.get('collection_name'),args.get('attachment_mode','default'))
                 record={'ok':True,'action':name,'kind':'literature','title':'文献入库任务 · '+str(job['total'])+' 篇','note_id':'literature:'+job['id'],'version':job['status'],'task_id':job['id'],'paper_id':self.pid,'recoverable':False,'id':uuid.uuid4().hex,'time':time.time(),'question':self.question}
                 self.writes+=1;self.log(record);self.results.append(record)
                 return {**record,'task':job,'message':'任务已启动，尚未代表PDF下载完成；进度见文献搜索。'}

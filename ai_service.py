@@ -40,7 +40,9 @@ class AIService:
     def catalog(self,refresh=False):
         rows=[];errors=[]
         with ThreadPoolExecutor(max_workers=2) as pool:
-            pending=[(provider,pool.submit(client.models,refresh=refresh)) for provider,client in [('chatgpt',self.chatgpt),('deepseek',self.deepseek)]]
+            clients=[('deepseek',self.deepseek)]
+            if self.chatgpt.public().get('active'):clients.append(('chatgpt',self.chatgpt))
+            pending=[(provider,pool.submit(client.models,refresh=refresh)) for provider,client in clients]
             for provider,future in pending:
                 try:rows.extend({**m,'provider':provider} for m in future.result())
                 except (ValueError,OSError):errors.append(('ChatGPT' if provider=='chatgpt' else 'DeepSeek')+' 模型列表暂不可用，请检查登录或 API 设置')

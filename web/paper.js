@@ -2,6 +2,8 @@
 const p$=id=>document.getElementById(id), {api:pApi,paintMath:pMath}=ResearchUI;
 const paperId=location.pathname.split('/').pop();document.body.dataset.paper=paperId;
 let paper, pageData, readingVersion, dirtyReading=false, editingReading=false, generationRun=false, readingSequence=0;
+const appendedSelections=new Set();
+document.addEventListener('research-append-selection',event=>{const detail=event.detail;if(detail.note_id!=='paper:'+paperId)return;detail.handled=true;detail.promise=(async()=>{if(!appendedSelections.has(detail.operation_id)){p$('reading-editor').value=p$('reading-editor').value.trimEnd()+'\n\n'+detail.content;appendedSelections.add(detail.operation_id);dirtyReading=true;}const saved=await pApi('/api/papers/'+paperId+'/reading',{version:readingVersion,content:p$('reading-editor').value});setReading(saved);return {id:detail.note_id,title:paper?.title||paperId};})();});
 function setReading(value){p$('reading-editor').value=value.content;readingVersion=value.version;p$('paper-reading').innerHTML=value.html;pMath(p$('paper-reading'));dirtyReading=false;}
 async function showTab(tab){
   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
@@ -32,13 +34,13 @@ function renderPages(query){
 }
 p$('paper-find').oninput=()=>renderPages(p$('paper-find').value.trim());
 document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>showTab(button.dataset.tab));
-p$('import-pdf').onclick=()=>p$('pdf-input').click();
+p$('import-pdf').onclick=()=>p$('pdf-input').click();p$('paper-pdf').onclick=async()=>{try{if(!paper||!await ResearchUI.openPaperPDF(paperId))p$('pdf-status').textContent='该文献尚无可打开的 PDF';else p$('pdf-status').textContent='已打开关联 PDF';}catch(error){p$('pdf-status').textContent=error.message;}};
 p$('pdf-input').onchange=async()=>{
   const file=p$('pdf-input').files[0];if(!file)return;
   if(file.size>32000000){p$('pdf-status').textContent='请选择 32 MB 以内的 PDF';return;}
   const button=p$('import-pdf');button.disabled=true;p$('pdf-status').textContent='正在导入 PDF…';
   try {const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file);});
-    await pApi('/api/papers/'+paperId+'/upload',{data,filename:file.name});pageData=null;paper.has_pdf=true;p$('paper-pdf').hidden=false;p$('pdf-status').textContent='PDF 已导入。请核对题名与本篇文献匹配。';await showTab('source');
+    await pApi('/api/papers/'+paperId+'/upload',{data,filename:file.name});pageData=null;paper=await pApi('/api/papers/'+paperId);p$('paper-pdf').hidden=!paper.has_pdf;p$('import-pdf').textContent='导入 / 添加 PDF 到 Zotero storage';p$('pdf-status').textContent='PDF 已保存到 Zotero storage，并关联到本篇文献。';await showTab('source');
   }catch(error){p$('pdf-status').textContent=error.message||'PDF 导入失败';}finally{button.disabled=false;p$('pdf-input').value='';}
 };
 function modeReading(edit){editingReading=edit;p$('reading-editor').hidden=!edit;p$('paper-reading').hidden=edit;p$('save-reading').hidden=!edit&&!dirtyReading;p$('toggle-reading-edit').textContent=edit?'阅读预览':'编辑笔记';}
@@ -65,4 +67,4 @@ p$('generate-reading').onclick=async()=>{
 };
 window.addEventListener('keydown',event=>{if(event.ctrlKey&&event.key.toLowerCase()==='s'){event.preventDefault();saveReading();}});
 window.addEventListener('beforeunload',event=>{if(dirtyReading){event.preventDefault();event.returnValue='';}});
-(async()=>{try {paper=await pApi('/api/papers/'+paperId);p$('paper-id').textContent=paperId+(new URLSearchParams(location.search).get('host')==='zotero'?' / Zotero 文献精读':' / 独立精读窗口');p$('paper-title').textContent=paper.title;p$('paper-meta').textContent=paper.author+' · '+paper.year+' · '+paper.venue;p$('paper-badges').textContent=paper.type+'　·　'+(paper.has_pdf?(paper.pdf_source||'已有本地 PDF'):'全文待导入');p$('paper-original').href=paper.url;p$('paper-original').hidden=!/^https?:/.test(paper.url||'');p$('paper-pdf').href='/api/papers/'+paperId+'/pdf';p$('paper-pdf').hidden=!paper.has_pdf;if(paper.zotero){p$('import-pdf').hidden=true;p$('pdf-help').textContent='PDF 由 Zotero 管理，本页直接读取现有附件。选中文字后自动翻译，生成 AI 精读需单独点击。';p$('paper-pdf').textContent='在 Zotero 中打开 PDF ↗';p$('paper-pdf').href='zotero://open-pdf/library/items/'+paper.zotero.attachment_key;p$('pdf-status').textContent='直接使用 Zotero storage 附件';}p$('paper-guide').innerHTML=paper.guide_html;setReading(paper.reading);if(!paper.reading.content)p$('paper-reading').textContent='尚无文献笔记。可以在这里自行记录；AI 生成的导读会单独存放。';document.title=paperId+' · '+paper.title+' · 文献精读';pMath(p$('paper-guide'));}catch(error){p$('paper-title').textContent=error.message;}})();
+(async()=>{try {paper=await pApi('/api/papers/'+paperId);p$('paper-id').textContent=paperId+(new URLSearchParams(location.search).get('host')==='zotero'?' / Zotero 文献精读':' / 独立精读窗口');p$('paper-title').textContent=paper.title;p$('paper-meta').textContent=paper.author+' · '+paper.year+' · '+paper.venue;p$('paper-badges').textContent=paper.type+'　·　'+(paper.has_pdf?(paper.pdf_source||'Zotero storage PDF'):'全文待导入');p$('paper-original').href=paper.url;p$('paper-original').hidden=!/^https?:/.test(paper.url||'');p$('paper-pdf').hidden=!paper.has_pdf;p$('import-pdf').textContent=paper.has_pdf?'导入 / 添加 PDF 到 Zotero storage':'导入 PDF 到 Zotero storage';p$('pdf-help').textContent='上传的 PDF 将由 Zotero 原生托管到当前数据目录/storage（按附件 key 分子目录）；此处仅保留文字索引和笔记，不另存 PDF。';p$('pdf-status').textContent=paper.zotero?.attachment_key?'直接使用 Zotero storage 附件':'全文尚未关联到 Zotero storage';p$('paper-guide').innerHTML=paper.guide_html;setReading(paper.reading);if(!paper.reading.content)p$('paper-reading').textContent='尚无文献笔记。可以在这里自行记录；AI 生成的导读会单独存放。';document.title=paperId+' · '+paper.title+' · 文献精读';pMath(p$('paper-guide'));}catch(error){p$('paper-title').textContent=error.message;}})();

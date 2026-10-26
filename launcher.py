@@ -23,7 +23,7 @@ def ensure_service():
   data=alive()
   if not data:
    logs=(ROOT/'.runtime'/'server.log').open('a',encoding='utf-8')
-   subprocess.Popen([str(ROOT/'.runtime'/'python'/'pythonw.exe'),str(ROOT/'server.py')],cwd=ROOT,stdout=logs,stderr=logs,creationflags=subprocess.CREATE_NO_WINDOW)
+   subprocess.Popen([str(ROOT/'.runtime'/'python'/'pythonw.exe'),str(ROOT/'server.py'),'--resume'],cwd=ROOT,stdout=logs,stderr=logs,creationflags=subprocess.CREATE_NO_WINDOW)
    for _ in range(60):
     time.sleep(.2);data=alive()
     if data:break

@@ -1,4 +1,4 @@
-"""Crossref candidates and bounded, asynchronous Zotero import jobs."""
+"""Crossref/Elicit candidates and bounded, asynchronous Zotero import jobs."""
 import hashlib,html,json,re,threading,time,uuid
 from pathlib import Path
 from urllib import request,parse,error
@@ -19,6 +19,8 @@ def crossref(query,limit=10,from_year=None,until_year=None):
     if from_year and until_year and from_year>until_year:raise ValueError('开始年份不能晚于结束年份')
     doi=re.sub(r'^https?://(?:dx\.)?doi.org/','',query.strip(),flags=re.I)
     exact=bool(re.fullmatch(r'10\.\d{4,9}/\S+',doi))
+    if not exact:
+        filters.extend('type:'+kind for kind in ['journal-article','proceedings-article','posted-content','report','dissertation','book-chapter'])
     params={'query.bibliographic':query.strip(),'rows':limit}
     if filters:params['filter']=','.join(filters)
     url='https://api.crossref.org/works'+('/'+parse.quote(doi,safe='') if exact else '?'+parse.urlencode(params))
@@ -36,9 +38,12 @@ def crossref(query,limit=10,from_year=None,until_year=None):
     items=[data] if exact else data.get('items',[]);rows=[]
     for item in items:
         value=str(item.get('DOI','')).strip().lower();title=clean((item.get('title') or [''])[0],1000)
+        if item.get('type') in {'component','dataset','peer-review'} or re.search(r'\.s\d{3,}$',value):
+            if exact:raise ValueError('该 DOI 指向补充材料或非论文条目，请提供原论文 DOI')
+            continue
         if not title or not re.fullmatch(r'10\.\d{4,9}/[^\s<>]+',value):continue
         date=next((item[k].get('date-parts',[]) for k in ['published','published-print','published-online','issued'] if item.get(k)),[])
-        year=str(date[0][0]) if date and date[0] else ''
+        year=str(date[0][0] or '') if date and date[0] else ''
         if year.isdigit() and ((from_year and int(year)<from_year) or (until_year and int(year)>until_year)):continue
         authors=[{'firstName':clean(a.get('given'),100),'lastName':clean(a.get('family') or a.get('name'),160),'creatorType':'author'} for a in item.get('author',[])[:40] if a.get('family') or a.get('name')]
         pdfs=[]
@@ -54,18 +59,71 @@ class LiteratureService:
         self.lock=threading.RLock();self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='literature')
         path=self.root/'candidates.json';self.candidates=json.loads(path.read_text('utf-8')) if path.exists() else {}
         self.jobs={};self.busy=set();self.cache={}
-    def search(self,query,limit=10,from_year=None,until_year=None):
-        key=json.dumps([query,limit,from_year,until_year],ensure_ascii=False)
+        from literature_providers import SearchSettings
+        self.settings=SearchSettings(self.root/'search-settings.json',atomic)
+    def search(self,query,limit=10,from_year=None,until_year=None,provider=None):
+        if not isinstance(query,str) or not 1<=len(query.strip())<=300:raise ValueError('请输入1—300字符的研究要求或 DOI')
+        if type(limit)!=int or not 1<=limit<=20:raise ValueError('每次检索1—20篇')
+        if any(v is not None and (type(v)!=int or not 1500<=v<=2100) for v in (from_year,until_year)):raise ValueError('年份范围无效')
+        if from_year and until_year and from_year>until_year:raise ValueError('开始年份不能晚于结束年份')
+        provider=provider or self.settings.public()['default_provider']
+        if provider=='auto':provider='elicit' if self.settings.public()['elicit_configured'] else 'crossref'
+        if provider not in {'crossref','elicit','combined'}:raise ValueError('检索来源无效')
+        key=json.dumps([query,limit,from_year,until_year,provider],ensure_ascii=False)
         with self.lock:cached=self.cache.get(key)
         if cached and time.time()-cached[0]<300:return cached[1]
-        rows=crossref(query,limit,from_year,until_year)
+        from literature_providers import elicit_search
+        warnings=[];rows=[]
+        if provider=='combined':
+            parts={}
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                tasks=[('Crossref',pool.submit(crossref,query,limit,from_year,until_year)),('Elicit',pool.submit(elicit_search,query,limit,from_year,until_year,self.settings.key()))]
+                for name,future in tasks:
+                    try:
+                        outcome=future.result()
+                        if name=='Elicit':part,notes=outcome;warnings.extend(notes)
+                        else:part=outcome
+                        parts[name]=part
+                    except ValueError as exc:warnings.append(str(exc))
+            for index in range(max((len(part) for part in parts.values()),default=0)):
+                for name in ('Elicit','Crossref'):
+                    if index<len(parts.get(name,[])):rows.append(parts[name][index])
+            if not rows:raise ValueError('；'.join(warnings) or '未取得检索结果')
+        elif provider=='elicit':rows,warnings=elicit_search(query,limit,from_year,until_year,self.settings.key())
+        else:rows=crossref(query,limit,from_year,until_year)
+        unique={}
+        for row in rows:
+            old=unique.get(row['candidate_id'])
+            if old:
+                old['pdf_urls']=list(dict.fromkeys(old.get('pdf_urls',[])+row.get('pdf_urls',[])))[:6]
+                if old['source']!=row['source']:old['source']='Crossref + Elicit'
+            else:unique[row['candidate_id']]=row
+        rows=list(unique.values())[:limit]
         with self.lock:
             for row in rows:self.candidates[row['candidate_id']]=row
             self.candidates=dict(list(self.candidates.items())[-1000:])
             self.atomic(self.root/'candidates.json',json.dumps(self.candidates,ensure_ascii=False))
-            result={'ok':True,'query':query,'results':rows,'source':'Crossref','scope':'题录/可用摘要；不代表已读全文或保证相关。中文与未登记 DOI 文献可能遗漏。'}
+            result={'ok':True,'query':query,'results':rows,'source':{'crossref':'Crossref','elicit':'Elicit','combined':'Crossref + Elicit'}[provider],'warnings':warnings,'destination':'storage','scope':'题录/可用摘要；不代表已读全文，PDF 获取结果以入库任务回执为准。'}
             self.cache[key]=(time.time(),result)
             return result
+    def search_identifiers(self,text):
+        if not isinstance(text,str) or not 1<=len(text)<=100000:raise ValueError('请粘贴含 DOI 的搜索结果，最多10万字符')
+        dois=[]
+        for value in re.findall(r'10\.\d{4,9}/[^\s<>"\u3000]+',text,re.I):
+            value=value.rstrip('.,;').lower()
+            while value.endswith(')') and value.count(')')>value.count('('):value=value[:-1]
+            if value not in dois:dois.append(value)
+        if not 1<=len(dois)<=20:raise ValueError('需要1—20个 DOI；可粘贴 Undermind/Elicit 导出的 DOI 列表或 RIS 文本')
+        rows=[];warnings=[]
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures=[(doi,pool.submit(crossref,doi,1)) for doi in dois]
+            for doi,future in futures:
+                try:rows.extend(future.result())
+                except ValueError as exc:warnings.append(doi+'：'+str(exc))
+        with self.lock:
+            for row in rows:self.candidates[row['candidate_id']]=row
+            self.atomic(self.root/'candidates.json',json.dumps(self.candidates,ensure_ascii=False))
+        return {'ok':True,'results':rows,'source':'DOI 核验','warnings':warnings,'destination':'storage'}
     def save(self,job):
         self.atomic(self.root/'jobs'/(job['id']+'.json'),json.dumps(job,ensure_ascii=False))
     def get(self,job_id):
@@ -78,15 +136,19 @@ class LiteratureService:
                 if data['status'] in {'queued','running','cancelling'}:data['status']='interrupted';data['message']='服务重启导致任务中断；已保存的条目保留，可重新导入去重。'
                 self.jobs[job_id]=data
             return json.loads(json.dumps(self.jobs[job_id]))
-    def start(self,candidate_ids,fetch_pdf=True):
+    def start(self,candidate_ids,fetch_pdf=True,collection_name=None,attachment_mode='default'):
+        if collection_name is not None and (not isinstance(collection_name,str) or not 1<=len(collection_name.strip())<=120 or any(ord(c)<32 for c in collection_name)):raise ValueError('集合名称无效')
+        collection_name=collection_name.strip() if collection_name else None
+        if not isinstance(attachment_mode,str) or attachment_mode not in {'default','linked_codex'}:raise ValueError('附件模式无效')
         if not isinstance(candidate_ids,list) or not 1<=len(candidate_ids)<=20 or any(not isinstance(i,str) for i in candidate_ids) or type(fetch_pdf)!=bool:raise ValueError('请选择1—20篇检索结果')
         ids=list(dict.fromkeys(candidate_ids))
         with self.lock:
             if any(i not in self.candidates for i in ids):raise ValueError('候选已过期或未经检索核验，请重新搜索；禁止凭空生成 DOI 入库')
             for job in self.jobs.values():
-                if job['status'] in {'queued','running','cancelling'} and job['candidate_ids']==ids and job['fetch_pdf']==fetch_pdf:return self.get(job['id'])
+                if job['status'] in {'queued','running','cancelling'} and job['candidate_ids']==ids and job['fetch_pdf']==fetch_pdf and job.get('collection_name')==collection_name and job.get('attachment_mode','default')==attachment_mode:return self.get(job['id'])
             if len(self.busy)>=3:raise ValueError('已有3个入库任务，请等待或停止后续导入')
             job={'id':uuid.uuid4().hex,'candidate_ids':ids,'fetch_pdf':fetch_pdf,'status':'queued','created':time.time(),'total':len(ids),'processed':0,'rows':[],'cancel_requested':False,'metadata_saved':0,'pdf_available':0,'pdf_downloaded':0,'message':'等待导入；PDF 将由 Zotero 写入 storage'}
+            job.update(collection_name=collection_name,attachment_mode=attachment_mode)
             self.jobs[job['id']]=job;self.busy.add(job['id']);self.save(job)
             self.pool.submit(self.run,job['id'],[dict(self.candidates[i]) for i in ids]);return self.get(job['id'])
     def cancel(self,job_id):
@@ -110,13 +172,13 @@ class LiteratureService:
                     for url in candidate.get('pdf_urls',[]):
                         try:metadata['pdf_urls'].append(public_url(url))
                         except ValueError:pass
-                    outcome=self.native({'action':'literature_import','metadata':metadata,'fetch_pdf':job['fetch_pdf']})
+                    outcome=self.native({'action':'literature_import','metadata':metadata,'fetch_pdf':job['fetch_pdf'],'collection_name':job.get('collection_name'),'attachment_mode':job.get('attachment_mode','default')})
                     if not outcome.get('ok'):raise ValueError(outcome.get('error','Zotero 导入失败'))
                     record=self.register(outcome['metadata'])
-                    row.update(ok=True,paper_id=record['id'],item_key=outcome['metadata']['item_key'],created=outcome['created'],pdf_status=outcome['pdf_status'],message=outcome.get('message',''))
+                    row.update(ok=True,paper_id=record['id'],item_key=outcome['metadata']['item_key'],created=outcome['created'],pdf_status=outcome['pdf_status'],message=outcome.get('message',''),path=outcome['metadata'].get('path',''),location_exception=outcome.get('location_exception',False),sha256=outcome.get('sha256',''))
                 except Exception as e:row.update(ok=False,error=str(e)[:350])
                 with self.lock:
-                    job['rows'].append(row);job['processed']=len(job['rows']);job['metadata_saved']=sum(bool(r.get('ok')) for r in job['rows']);job['pdf_available']=sum(r.get('pdf_status') in {'existing','downloaded','copied'} for r in job['rows']);job['pdf_downloaded']=sum(r.get('pdf_status') in {'downloaded','copied'} for r in job['rows']);self.save(job)
+                    job['rows'].append(row);job['processed']=len(job['rows']);job['metadata_saved']=sum(bool(r.get('ok')) for r in job['rows']);job['pdf_available']=sum(r.get('pdf_status') in {'existing','downloaded','copied','linked'} for r in job['rows']);job['pdf_downloaded']=sum(r.get('pdf_status') in {'downloaded','copied','linked'} for r in job['rows']);self.save(job)
             with self.lock:
                 job['status']='cancelled' if job['cancel_requested'] else 'completed';job.pop('current_title',None);job['message']='已处理 '+str(job['processed'])+' 篇；题录入库 '+str(job['metadata_saved'])+' 篇，PDF 可用 '+str(job['pdf_available'])+' 篇，本次获取 '+str(job['pdf_downloaded'])+' 篇。';self.save(job)
         except Exception:

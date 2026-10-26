@@ -2,9 +2,11 @@
 window.ResearchUI = (() => {
   const $ = id => document.getElementById(id);
   async function api(path, payload) {
-    const response = await fetch(path, payload === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json','X-Notebook-Request':'1'},body:JSON.stringify(payload)});
+    let response;
+    try{response=await fetch(path, payload === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json','X-Notebook-Request':'1'},body:JSON.stringify(payload)});}
+    catch(error){const failure=new Error('暂时无法连接本地科研笔记服务；当前修改请保留在窗口中，连接恢复后再保存');failure.isTransportError=true;throw failure;}
     const body = await response.json();
-    if (!response.ok) throw new Error(body.error || '操作失败');
+    if (!response.ok){const error=new Error(body.error||'操作失败');error.status=response.status;throw error;}
     return body;
   }
   function paintMath(root) {
@@ -13,6 +15,17 @@ window.ResearchUI = (() => {
       try {katex.render(el.textContent,el,{displayMode:el.classList.contains('math-display'),throwOnError:false,trust:false,maxExpand:1000});el.dataset.rendered='1';} catch (_) {}
     });
   }
+  async function openPaperPDF(pid,page=null,target=null) {
+    const id=encodeURIComponent(pid),detail=await api('/api/papers/'+id);
+    if(detail.zotero?.attachment_key){
+      try{await api('/api/zotero/action',{paper_id:pid,action:'open_pdf',page});target?.close();return true;}
+      catch(error){if(!detail.has_pdf)throw error;if(new URLSearchParams(location.search).get('host')==='zotero')throw error;}
+    }
+    if(!detail.has_pdf){target?.close();return false;}
+    const url='/api/papers/'+id+'/pdf'+(page?'#page='+encodeURIComponent(page):'');
+    if(target)target.location.href=url;else if(new URLSearchParams(location.search).get('host')==='zotero')window.open(url,'rn-pdf-'+pid,'popup,width=1100,height=850,resizable=yes,scrollbars=yes');else window.location.assign(url);
+    return true;
+  }
   new MutationObserver(records => {
     for (const record of records) for (const node of record.addedNodes) if (node.nodeType===1 && !node.closest('.katex')) paintMath(node.parentElement || node);
   }).observe(document.body,{childList:true,subtree:true});
@@ -20,17 +33,77 @@ window.ResearchUI = (() => {
   document.addEventListener('click',async event => {
     const link=event.target.closest('a[data-paper]');
     if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.button!==0) return;
+    const page=Number(link.dataset.page)||null;
     if(new URLSearchParams(location.search).get('host')==='zotero'){
-      event.preventDefault();try{await api('/api/zotero/open',{paper_id:link.dataset.paper});}catch(error){alert(error.message);}return;
+      event.preventDefault();try{if(!await openPaperPDF(link.dataset.paper,page))await api('/api/zotero/open',{paper_id:link.dataset.paper});}catch(error){alert(error.message);}return;
     }
-    const popup=window.open(link.href,'paper-'+link.dataset.paper,'popup,width=1280,height=920,resizable=yes,scrollbars=yes');
-    if (popup) {event.preventDefault();popup.focus();}
+    const popup=window.open('about:blank','paper-'+link.dataset.paper,'popup,width=1100,height=850,resizable=yes,scrollbars=yes');
+    if(!popup)return;event.preventDefault();
+    try{if(!await openPaperPDF(link.dataset.paper,page,popup))popup.location.href=link.href;}catch(_){popup.location.href=link.href;}
   });
   const ui=document.createElement('div');
   ui.innerHTML=`<dialog id="ds-dialog"><form id="ds-form"><header><h2>DeepSeek 设置</h2><button type="button" class="dialog-close" data-ds-close aria-label="关闭 DeepSeek 设置">×</button></header><p class="muted">用于选中文字翻译和论文辅助精读。选中文字后自动翻译，只发送当前选文；全文精读仍需点击。按 DeepSeek 账户计费。</p><label>API Key<input id="ds-key" type="password" autocomplete="off" placeholder="首次填写；留空保留已有密钥"></label><label>模型<input id="ds-model" value="deepseek-flash" required autocomplete="off"></label><p class="muted">服务地址固定为 api.deepseek.com。密钥使用当前 Windows 用户加密保存在本机，不进入仓库导出。</p><p id="ds-status" role="status"></p><footer><button id="ds-clear" type="button" class="secondary">清除已存密钥</button><button id="ds-test" type="button" class="secondary">保存并测试</button><button class="primary" type="submit">保存设置</button></footer></form></dialog>
   <section id="translation-panel" class="translation-panel compact-translation" hidden aria-label="选文译文"><header><select id="translation-target" aria-label="翻译目标语言"><option value="简体中文">中文</option><option value="English">English</option></select><button id="close-translation" aria-label="关闭译文" title="关闭 · Esc">×</button></header><div id="translation-loading" class="translation-loading" aria-label="正在翻译" hidden><i></i><i></i><i></i></div><p id="translation-status" role="status" hidden></p><textarea id="translation-result" class="translation-text" dir="auto" aria-label="译文，可直接编辑和复制" spellcheck="false"></textarea><footer><button id="translation-settings" title="DeepSeek 设置" aria-label="DeepSeek 设置">⚙</button><button id="summary-selection">总结</button><button id="translate-selection">翻译</button><button id="copy-translation" disabled>复制</button><button id="save-translation" disabled>存为笔记</button></footer></section>`;
   document.body.append(ui);
   let current=null,result=null,requestRun=0,selectionTimer,pointerDown=false,lastSelection='',translationSubscription=null,selectionMode='translate';
+  const destinationUI=document.createElement('section');destinationUI.className='selection-note-destination';
+  destinationUI.innerHTML='<label>保存到 <select id="selection-note-mode"><option value="auto">默认位置</option><option value="existing">选择已有笔记</option><option value="new">新建笔记（保存后设为默认）</option></select></label><div id="selection-note-picker" hidden><input id="selection-note-search" type="search" placeholder="搜索笔记标题或正文" aria-label="搜索保存目标笔记"><select id="selection-note-choice" aria-label="选择保存目标笔记"></select></div><input id="selection-note-title" hidden aria-label="新笔记标题" placeholder="新笔记标题"><small id="selection-note-hint" role="status"></small>';
+  $('translation-panel').querySelector('footer').before(destinationUI);
+  const noteDefaultsKey='rn-selection-note-default';
+  function readNoteDefaults(){try{return JSON.parse(localStorage.getItem(noteDefaultsKey))||{};}catch(_){return {};}}
+  function rememberNoteDefaults(value){try{localStorage.setItem(noteDefaultsKey,JSON.stringify({...readNoteDefaults(),...value}));}catch(_){}}
+  const storedDefaults=readNoteDefaults();$('selection-note-mode').value=['auto','existing','new'].includes(storedDefaults.mode)?storedDefaults.mode:'auto';
+  let destinationSearchRun=0,destinationSearchTimer;const selectionOperations=new Map();
+  function selectionPaper(){return result?.selection.paper||current?.paper||document.body.dataset.paper||'';}
+  function updateNoteDestination(){
+    const mode=$('selection-note-mode').value,pid=selectionPaper(),last=readNoteDefaults();
+    $('selection-note-picker').hidden=mode!=='existing';$('selection-note-title').hidden=mode!=='new';
+    $('selection-note-hint').textContent=mode==='new'?'新建后会记住这篇笔记，后续可继续追加':mode==='existing'?'搜索并选择一篇已有笔记；报告不会列入保存目标':pid?'默认：本文献阅读笔记 · '+pid:document.body.dataset.note?'默认：当前打开的笔记':last.title?'默认：'+last.title:'默认：“我的摘录”（首次保存时创建）';
+  }
+  async function searchDestinationNotes(){
+    const run=++destinationSearchRun,q=encodeURIComponent($('selection-note-search').value.trim()),last=readNoteDefaults(),selected=$('selection-note-choice').value||last.id;
+    try{
+      const [data,paperNotes]=await Promise.all([api('/api/notes?q='+q),api('/api/paper-notes?q='+q)]);if(run!==destinationSearchRun)return;
+      const choices=$('selection-note-choice');choices.replaceChildren();const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='请选择目标笔记';choices.append(placeholder);
+      const rows=[...(paperNotes||[]).map(n=>({id:'paper:'+n.id,title:n.title,folder:'文献阅读笔记'})),...(data.notes||[]).filter(n=>n.folder!=='调研报告'&&!n.trashed)];
+      for(const note of rows){const option=document.createElement('option');option.value=note.id;option.textContent=note.title+' · '+note.folder;option.dataset.title=note.title;choices.append(option);}
+      if(rows.some(n=>n.id===selected))choices.value=selected;
+      if(!rows.length)$('selection-note-hint').textContent='没有匹配的笔记，可以选择“新建笔记”';
+    }catch(error){$('selection-note-hint').textContent=error.message;}
+  }
+  $('selection-note-mode').onchange=()=>{rememberNoteDefaults({mode:$('selection-note-mode').value});updateNoteDestination();$('save-translation').disabled=!result?.text?.trim();$('save-translation').textContent='加入笔记';if($('selection-note-mode').value==='existing')searchDestinationNotes();};
+  $('selection-note-search').oninput=()=>{clearTimeout(destinationSearchTimer);destinationSearchTimer=setTimeout(searchDestinationNotes,160);};
+  $('selection-note-choice').onchange=()=>{const option=$('selection-note-choice').selectedOptions[0];if(option?.value){rememberNoteDefaults({id:option.value,title:option.dataset.title});$('save-translation').disabled=!result?.text?.trim();$('save-translation').textContent='加入笔记';}};
+  updateNoteDestination();if($('selection-note-mode').value==='existing')searchDestinationNotes();
+
+  async function appendSelectionNote(id,content){
+    const operationKey=JSON.stringify([id,content]);if(!selectionOperations.has(operationKey))selectionOperations.set(operationKey,crypto.randomUUID());
+    const event={note_id:id,content,operation_id:selectionOperations.get(operationKey),handled:false,promise:null};document.dispatchEvent(new CustomEvent('research-append-selection',{detail:event}));
+    if(event.handled)return await event.promise;
+    if(id.startsWith('paper:')){
+      const pid=id.slice(6),doc=await api('/api/papers/'+pid);await api('/api/papers/'+pid+'/reading',{version:doc.reading.version,content:doc.reading.content.trimEnd()+'\n\n'+content});
+      document.dispatchEvent(new CustomEvent('research-chat-saved',{detail:{paper_id:pid}}));return {id,title:'文献阅读笔记 · '+pid};
+    }
+    const doc=await api('/api/notes/'+id);if(doc.trashed||doc.folder==='调研报告')throw new Error('该目标不是可写入的笔记，请重新选择');
+    const saved=await api('/api/notes/'+id,{version:doc.version,title:doc.title,folder:doc.folder,tags:doc.tags,content:doc.content.trimEnd()+'\n\n'+content});return {id:saved.id,title:saved.title};
+  }
+  async function saveSelectionNote(content,title){
+    const mode=$('selection-note-mode').value,pid=selectionPaper();let id;
+    if(mode==='new'){
+      const note=await api('/api/notes',{title:$('selection-note-title').value.trim()||title,content,folder:'我的笔记',tags:pid?[pid]:[]});
+      rememberNoteDefaults({mode:'existing',id:note.id,title:note.title});$('selection-note-mode').value='existing';$('selection-note-search').value='';updateNoteDestination();await searchDestinationNotes();$('selection-note-choice').value=note.id;return note;
+    }
+    if(mode==='existing'){id=$('selection-note-choice').value;if(!id)throw new Error('请在下拉框选择已有笔记，或改选“新建笔记”');}
+    else if(pid)id='paper:'+pid;
+    else id=document.body.dataset.note||readNoteDefaults().id;
+    if(!id){
+      const data=await api('/api/notes?q='+encodeURIComponent('我的摘录')),matches=data.notes.filter(n=>n.title==='我的摘录'&&n.folder==='我的笔记'&&!n.trashed);
+      if(matches.length>1)throw new Error('有多篇“我的摘录”，请在已有笔记列表中选择保存目标');
+      if(matches.length)id=matches[0].id;
+      else{const note=await api('/api/notes',{title:'我的摘录',folder:'我的笔记',tags:[],content});rememberNoteDefaults({id:note.id,title:note.title});updateNoteDestination();return note;}
+    }
+    const saved=await appendSelectionNote(id,content);if(!pid||mode==='existing')rememberNoteDefaults({id:saved.id,title:saved.title});updateNoteDestination();return saved;
+  }
   const translationCache=new Map(),translationJobs=new Map();
   async function openSettings() {
     try {const data=await api('/api/deepseek/settings');$('ds-key').value='';$('ds-model').value=data.model;$('ds-status').textContent=data.configured?'密钥已配置 · '+data.key_source:'尚未配置 API Key';$('ds-dialog').showModal();} catch(error) {alert(error.message);}
@@ -110,8 +183,9 @@ window.ResearchUI = (() => {
   async function translate(){
     if(!current)return;
     const run=++requestRun,target=$('translation-target').value,selection={...current},cacheKey=selectionMode+'\0'+target+'\0'+selection.text;result=null;
+    updateNoteDestination();
     $('translation-status').hidden=true;$('translation-result').value='';$('translation-loading').hidden=false;
-    $('copy-translation').textContent='复制';$('save-translation').textContent='存为笔记';$('copy-translation').disabled=$('save-translation').disabled=true;
+    $('copy-translation').textContent='复制';$('save-translation').textContent='加入笔记';$('copy-translation').disabled=$('save-translation').disabled=true;
     try{
       translationSubscription?.cancel();
       if(!translationCache.has(cacheKey))translationSubscription=subscribeTranslation(selection.text,target,partial=>{if(run!==requestRun)return;$('translation-loading').hidden=true;$('translation-result').value=partial;result={text:partial,selection,target,model:'DeepSeek'};$('copy-translation').disabled=false;placePopup(selection.rect);},selectionMode);
@@ -134,12 +208,10 @@ window.ResearchUI = (() => {
     try {
       const excerpt=result.selection.text.slice(0,30).replace(/[\r\n]/g,' ');
       const title=(selectionMode==='summary'?'选文总结 · ':'翻译笔记 · ')+new Date().toLocaleDateString('zh-CN').replaceAll('/','-')+' · '+excerpt;
-      const content='# '+title+'\n\n来源：'+result.selection.source+(result.selection.paper?' · ['+result.selection.paper+'](/paper/'+result.selection.paper+')':'')+'\n\n## 原文\n\n'+result.selection.text+'\n\n## '+(selectionMode==='summary'?'总结':'译文（'+result.target+'）')+'\n\n'+result.text+'\n\n> DeepSeek '+result.model+' 辅助翻译，请对照原文。\n';
-      const pid=result.selection.paper||document.body.dataset.paper,nid=document.body.dataset.note;
-      if(pid){const doc=await api('/api/papers/'+pid);await api('/api/papers/'+pid+'/reading',{version:doc.reading.version,content:doc.reading.content.trimEnd()+'\n\n'+content});document.dispatchEvent(new CustomEvent('research-chat-saved',{detail:{paper_id:pid}}));}
-      else if(nid){const doc=await api('/api/notes/'+nid);await api('/api/notes/'+nid,{...doc,content:doc.content.trimEnd()+'\n\n'+content});}
-      else throw new Error('请先打开目标文献笔记，再加入选文；不会自动新建笔记');
-      $('save-translation').textContent='已保存';window.dispatchEvent(new Event('research-notes-changed'));
+      const output=$('translation-result'),selected=output.value.slice(output.selectionStart,output.selectionEnd)||result.text;
+      const content='## '+title+'\n\n来源：'+result.selection.source+(result.selection.paper?' · ['+result.selection.paper+'](/paper/'+result.selection.paper+')':'')+'\n\n### 原文\n\n'+result.selection.text+'\n\n### '+(selectionMode==='summary'?'总结':'译文（'+result.target+'）')+'\n\n'+selected+'\n\n> '+(result.model||'AI')+' 辅助处理，请对照原文。\n';
+      const saved=await saveSelectionNote(content,title);
+      $('save-translation').textContent='已保存';$('selection-note-hint').textContent='已保存到：'+saved.title;window.dispatchEvent(new Event('research-notes-changed'));
     }catch(error){showError(error.message);button.disabled=false;}
   };
   $('translation-result').addEventListener('beforeinput',()=>{requestRun++;translationSubscription?.cancel();$('translation-loading').hidden=true;});
@@ -151,5 +223,5 @@ window.ResearchUI = (() => {
   window.addEventListener('pointermove',e=>{if(!drag)return;panel.style.left=Math.max(8,Math.min(innerWidth-panel.offsetWidth-8,drag.left+e.clientX-drag.x))+'px';panel.style.top=Math.max(8,Math.min(innerHeight-panel.offsetHeight-8,drag.top+e.clientY-drag.y))+'px';});
   window.addEventListener('pointerup',()=>{drag=null;if(panel.dataset.manualSize){try{localStorage.setItem('rn-translation-size',JSON.stringify({width:panel.offsetWidth,height:panel.offsetHeight}));}catch(_){}}});
   try{const size=JSON.parse(localStorage.getItem('rn-translation-size'));if(size?.width&&size?.height){panel.style.width=Math.min(size.width,innerWidth-28)+'px';panel.style.height=Math.min(size.height,innerHeight-28)+'px';panel.dataset.manualSize='1';}}catch(_){}
-  return {api,paintMath,openSettings};
+  return {api,paintMath,openSettings,openPaperPDF};
 })();

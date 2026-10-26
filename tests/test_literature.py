@@ -41,8 +41,9 @@ class LiteratureTests(unittest.TestCase):
   papers=self.root/'papers';atomic(papers/'catalog.json','[]');library=PaperLibrary(papers,self.root/'source',atomic,Conflict,render_markdown);storage=ZoteroStorage(library,self.root/'storage')
   payload=dict(library_id=1,item_key='ABCDEFGH',title='Public paper',doi='10.1234/public')
   first=storage.register_parent(payload);self.assertIsNone(library.pdf(first['id']))
-  pdf=self.root/'storage/PDF12345/test.pdf';pdf.parent.mkdir(parents=True);pdf.write_bytes(b'%PDF-1.4 public test')
-  second=storage.register_parent({**payload,'attachment_key':'PDF12345','path':str(pdf)});self.assertEqual(first['id'],second['id']);self.assertEqual(len(library.refs),1);self.assertEqual(library.pdf(first['id']),pdf)
+  (self.root/'zotero.sqlite').touch() # Isolated directory marker, never a real Zotero database.
+  pdf=self.root/'storage/PDF23456/test.pdf';pdf.parent.mkdir(parents=True);pdf.write_bytes(b'%PDF-1.4\npublic test fixture\n%%EOF\n')
+  second=storage.register_parent({**payload,'attachment_key':'PDF23456','path':str(pdf)});self.assertEqual(first['id'],second['id']);self.assertEqual(len(library.refs),1);self.assertEqual(library.pdf(first['id']),pdf)
  def test_input_bounds(self):
   for args in [('',1,None,None),('q',30,None,None),('q',1,2026,2020)]:
    with self.assertRaises(ValueError):crossref(*args)
