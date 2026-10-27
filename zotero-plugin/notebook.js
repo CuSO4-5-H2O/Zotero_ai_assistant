@@ -279,6 +279,13 @@ var ResearchNotebookPlugin={
     await this.request('/api/dock/publish',{channel:dock.channel,event:{type:'context',intent,selection_kind:selectionKind,paper_id:record.id,title:record.title,text:annotation?.text?.trim()||'',page,attachment_key:att.key,library_id:att.libraryID,source_uri:'zotero://open-pdf/'+scope+'/items/'+att.key+(page?'?page='+page:'')}});
     return dock;
   },
+  paperRating(item){
+    const extra=item.getField('extra')||'',tags=item.getTags()||[],storage=Zotero.Prefs.get('extensions.zotero.zoterostyle.ratingColumn.storage',true)==='tag'?'tag':'extra';
+    const legacy=tags.filter(({tag})=>/^⭐{1,5}$/u.test(tag)&&!Zotero.Tags.getColor(item.libraryID,tag));
+    const match=extra.split(/\r?\n/).find(line=>line.startsWith('rate: ')),text=match?.slice(6).trim()||'',extraRating=/^[1-5]$/.test(text)?Number(text):0;
+    const tagRating=legacy.length?Array.from(legacy[0].tag).length:0,rating=storage==='tag'&&tagRating?tagRating:extraRating||tagRating;
+    return {rating,starred:rating>0,version:Zotero.Utilities.Internal.md5(JSON.stringify([extra,tags.map(t=>[t.tag,t.type||0]).sort(),storage]))};
+  },
   async nativeAction(data){
     if(data.action==='current_reader'){
       const win=Zotero.getMainWindow(),tab=win?.Zotero_Tabs?.selectedID;
@@ -350,6 +357,12 @@ var ResearchNotebookPlugin={
       return {version:this.version,panels:this.selectionPanels?.size||0,events:this.translationDiagnostics||[],errors,readers:(Zotero.Reader._readers||[]).map(r=>{const i=r._internalReader,v=i?._primaryView,w=v?._iframeWindow;return {id:r.itemID,internal:!!i,view:!!v,frame:!!w,selectionRanges:v?._selectionRanges?.length??null,popup:!!i?._state?.primaryViewSelectionPopup};})};
     }
     if(data.action==='ui_status')return this.uiStatus();
+    if(data.action==='get_tags'&&data.rating_batch){
+      if(!Array.isArray(data.rating_batch)||data.rating_batch.length>300)throw new Error('星标查询数量无效');
+      const results=[];for(const ref of data.rating_batch){if(!Number.isInteger(ref.library_id)||ref.library_id<1||!/^[A-Z0-9]{8}$/.test(ref.item_key||'')||!/^([A-D]\d{1,2}|Z\d+_[A-Z0-9]{8})$/.test(ref.id||''))throw new Error('文献星标查询参数无效');
+        const item=await Zotero.Items.getByLibraryAndKeyAsync(ref.library_id,ref.item_key);if(!item?.isRegularItem?.()||item.deleted){results.push({id:ref.id,available:false});continue;}results.push({id:ref.id,available:true,...this.paperRating(item)});
+      }return {ok:true,ratings:results};
+    }
     if(!Number.isInteger(data.library_id)||data.library_id<1)throw new Error('资料库信息不合法');
     let att,parent;
     if(/^[A-Z0-9]{8}$/.test(data.attachment_key||'')){
@@ -360,6 +373,25 @@ var ResearchNotebookPlugin={
       parent=await Zotero.Items.getByLibraryAndKeyAsync(data.library_id,data.item_key);
       if(!parent?.isRegularItem()||parent.deleted)throw new Error('没有找到文献条目');att=parent;
     }else throw new Error('文献信息不合法');
+    if(data.action==='get_tags'&&typeof data.rating_set==='boolean'){
+      const item=parent||att;if(!item?.isRegularItem?.())throw new Error('星标需要关联 Zotero 文献条目');
+      const before=this.paperRating(item);if(data.rating_version!==before.version)throw new Error('Zotero 星标已变化，请刷新后重试');
+      if(data.rating_set===before.starred)return {ok:true,...before};
+      await Zotero.DB.executeTransaction(async()=>{
+        if(this.paperRating(item).version!==data.rating_version)throw new Error('Zotero 星标已变化，请刷新后重试');
+        let extra=item.getField('extra')||'';const lines=extra.split(/\r?\n/),tags=item.getTags()||[];
+        if(data.rating_set){
+          if(lines.some(line=>line.startsWith('rate: ')))throw new Error('其他字段已有非标准 rate 值，未覆盖；请先在 Zotero Style 中检查评级');
+          const storage=Zotero.Prefs.get('extensions.zotero.zoterostyle.ratingColumn.storage',true)==='tag'?'tag':'extra';
+          if(storage==='tag'){if(Zotero.Tags.getColor(item.libraryID,'⭐'))throw new Error('⭐ 已用作彩色标签，请先在 Zotero Style 中设置评级');item.addTag('⭐');}
+          else item.setField('extra',extra+(extra&&!extra.endsWith('\n')?'\n':'')+'rate: 1');
+        }else{
+          item.setField('extra',lines.filter(line=>!/^rate: [1-5]\s*$/.test(line)).join('\n'));
+          for(const {tag} of tags)if(/^⭐{1,5}$/u.test(tag)&&!Zotero.Tags.getColor(item.libraryID,tag))item.removeTag(tag);
+        }
+        await item.save();
+      });return {ok:true,...this.paperRating(item)};
+    }
     if(['get_tags','add_paper_tags','remove_paper_tags'].includes(data.action)){
       const item=parent||att;
       const snapshot=()=>({tags:item.getTags().map(t=>t.tag).sort(),version:JSON.stringify(item.getTags().map(t=>[t.tag,t.type||0]).sort())});

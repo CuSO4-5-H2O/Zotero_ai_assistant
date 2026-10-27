@@ -1,4 +1,4 @@
-# Zotero AI Assistant · 2.0.21
+# Zotero AI Assistant · 2.0.24
 
 在 Zotero 原窗口中阅读 PDF、写 Markdown 笔记、划词翻译、总结和向 AI 提问。支持星标置顶、独立报告、工程文件、对话归档与在线文献检索。
 
@@ -23,7 +23,7 @@ py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 ```
 
 1. 运行 `.\.runtime\python\pythonw.exe launcher.py` 启动本地服务。
-2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.21.xpi`。
+2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.24.xpi`。
 3. 点击右下角 **科研仓库** 或按 **Ctrl + Alt + N**；PDF 中点 **科研精读**。
 4. 在设置中配置自己的 AI 服务。未配置时仍可管理笔记和文件。
 
@@ -35,6 +35,7 @@ py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 - 在 Zotero 切换 PDF 时，浮窗中的文献和助手上下文跟随当前阅读器；切换前保存待处理修改，遇到版本冲突保留本地草稿。
 - 划词自动翻译、可编辑译文、选词摘抄、总结；取消选区后关闭，编辑译文期间保留。
 - 笔记和报告支持星标置顶；历史、冲突保护及可恢复删除。
+- 文献星标与 Zotero Style 评级同步，仓库文献可按星标筛选；取消星标会清除该文献的评级。
 - AI 助手支持模型和推理等级、PDF 问答、笔记和工程操作、文献标签、网页搜索、对话删除撤销和归档。
 - Crossref 检索无需 Key；Elicit 需要自己的 API 权限与 Key。搜索后可自动获取 PDF 并入库；重复 DOI 优先复用，缺失原文如实显示。
 - 普通导入默认加入左侧 storage 分类；PDF 由 Zotero 托管到其实际数据目录的 storage。
