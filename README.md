@@ -1,4 +1,4 @@
-# Zotero AI Assistant · 2.0.20
+# Zotero AI Assistant · 2.0.21
 
 在 Zotero 原窗口中阅读 PDF、写 Markdown 笔记、划词翻译、总结和向 AI 提问。支持星标置顶、独立报告、工程文件、对话归档与在线文献检索。
 
@@ -23,7 +23,7 @@ py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 ```
 
 1. 运行 `.\.runtime\python\pythonw.exe launcher.py` 启动本地服务。
-2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.20.xpi`。
+2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.21.xpi`。
 3. 点击右下角 **科研仓库** 或按 **Ctrl + Alt + N**；PDF 中点 **科研精读**。
 4. 在设置中配置自己的 AI 服务。未配置时仍可管理笔记和文件。
 

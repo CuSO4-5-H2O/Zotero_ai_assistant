@@ -50,3 +50,5 @@
 .editor-extra{margin-top:14px;border-top:1px solid #e7eee9;padding-top:8px;color:#638175}
 .editor-extra>summary{cursor:pointer;font-size:11px;padding:4px 0}
 .editor-extra .more-tools{border:0;margin:0;padding:6px 0 0}
+
+#paper-quick-entry{margin:10px 0 3px}#paper-quick-entry label{display:block;margin-bottom:5px}#paper-entry{box-sizing:border-box;width:100%;min-height:62px;padding:10px 12px;border:1px solid #cadbd0;border-radius:8px;background:#fff;color:#254a42;resize:vertical;font:13px/1.6 inherit}#paper-rendered{padding:12px 2px;max-width:none;overflow-wrap:anywhere}#paper-rendered[hidden],#paper-quick-entry[hidden],#paper-edit-toggle[hidden],.chat-selection-excerpt[hidden]{display:none!important}.chat-selection-excerpt{position:fixed;z-index:10000;padding:7px 11px;border:1px solid #b8d2c1;border-radius:8px;background:#216b55;color:white;box-shadow:0 4px 16px #153c3330;font:12px system-ui;cursor:pointer}.chat-selection-excerpt:hover{background:#175b47!important}

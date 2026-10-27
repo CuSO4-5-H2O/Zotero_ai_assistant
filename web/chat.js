@@ -23,6 +23,21 @@ var ResearchChat=(()=>{
   let paper=null,conversation={version:'0',messages:[]},run=0,controller=null,loading=false,preparing=false;
   const drafts=new Map(),selectionContexts=new Map(),historyOpen=new Map();
   const base=pid=>pid==='workspace'?'/api/workspace':'/api/papers/'+pid;
+  const excerptButton=document.createElement('button');excerptButton.type='button';excerptButton.id='chat-selection-excerpt';excerptButton.textContent='摘录选文到笔记';excerptButton.className='chat-selection-excerpt';excerptButton.hidden=true;document.body.append(excerptButton);
+  let answerSelection=null,excerptBusy=false;
+  function captureAnswerSelection(){
+    const selection=window.getSelection();if(!selection||selection.isCollapsed)return;
+    const a=selection.anchorNode?.parentElement?.closest('.chat-answer'),b=selection.focusNode?.parentElement?.closest('.chat-answer');
+    const text=selection.toString().trim();if(!a||a!==b||!text||!$('chat-messages').contains(a))return;
+    const target=paper?.id&&paper.id!=='workspace'?'paper:'+paper.id:document.body.dataset.note||'';
+    const rect=selection.getRangeAt(0).getBoundingClientRect();answerSelection={text,target};excerptButton.hidden=false;
+    excerptButton.style.left=Math.max(8,Math.min(rect.left,innerWidth-excerptButton.offsetWidth-8))+'px';excerptButton.style.top=Math.max(8,Math.min(rect.bottom+8,innerHeight-excerptButton.offsetHeight-8))+'px';
+  }
+  document.addEventListener('mouseup',event=>{if(event.target.closest?.('#chat-selection-excerpt'))return;captureAnswerSelection();});
+  document.addEventListener('keyup',event=>{if(event.key==='Shift'||event.key.startsWith('Arrow'))captureAnswerSelection();});
+  document.addEventListener('mousedown',event=>{if(!event.target.closest?.('#chat-selection-excerpt')){excerptButton.hidden=true;answerSelection=null;}});
+  excerptButton.addEventListener('mousedown',event=>event.preventDefault());
+  excerptButton.addEventListener('click',async()=>{const selected=answerSelection;if(!selected||excerptBusy)return;if(!selected.target){status('请先打开目标文献笔记或仓库笔记',true);return;}excerptBusy=true;excerptButton.disabled=true;try{const quote=selected.text.split(/\r?\n/).map(line=>'> '+line).join('\n');const result=await ResearchUI.appendSelectionNote(selected.target,quote);status('选文已摘录到 '+result.title);excerptButton.hidden=true;answerSelection=null;}catch(error){status(error.message+'；选文仍保留，请重试',true);}finally{excerptBusy=false;excerptButton.disabled=false;}});
   const actionNames={import_literature:'已启动文献入库',create_note:'已新建',update_note:'已编辑',delete_note:'已移入回收站',restore_note:'已恢复',create_project_file:'已新建文件',update_project_file:'已修改文件',trash_project_file:'已移入可恢复记录',restore_project_file:'已恢复文件',add_paper_tags:'已添加标签',remove_paper_tags:'已移除标签'};
   const status=(text,error=false)=>{$('chat-status').textContent=text;$('chat-status').classList.toggle('chat-error',error);};
   function stop(){run++;controller?.abort();controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}
@@ -153,7 +168,7 @@ var ResearchChat=(()=>{
   $('chat-question').onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();ask();}};
   document.querySelectorAll('[data-question]').forEach((b,i)=>{b.dataset.originalQuestion=b.dataset.question;b.dataset.originalLabel=b.textContent;b.dataset.workspaceQuestion=['列出当前工程文件','整理仓库中最近的笔记','新建一篇“研究计划”笔记，记录当前课题目标、待验证问题和下一步实验。'][i];b.dataset.workspaceLabel=['查看工程文件','整理仓库笔记','新建研究计划'][i];});
   document.querySelectorAll('[data-question]').forEach(b=>b.onclick=()=>{$('chat-question').value=b.dataset.question;ask();});
-  document.addEventListener('research-paper-change',e=>{if(paper?.id!==e.detail.id){stop();if(paper)drafts.set(paper.id,$('chat-question').value);paper=null;conversation={version:'0',messages:[]};$('chat-messages').replaceChildren();}});
+  document.addEventListener('research-paper-change',e=>{if(paper?.id!==e.detail.id){excerptButton.hidden=true;answerSelection=null;stop();if(paper)drafts.set(paper.id,$('chat-question').value);paper=null;conversation={version:'0',messages:[]};$('chat-messages').replaceChildren();}});
   window.addEventListener('pagehide',stop);
   return {open,setSelection};
 })();

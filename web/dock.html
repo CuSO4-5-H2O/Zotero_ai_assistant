@@ -31,9 +31,11 @@
 <div id="document-properties" class="note-properties" hidden><select id="document-folder" aria-label="笔记分类"></select><input id="document-tags" aria-label="笔记标签" placeholder="标签，用逗号分隔"></div>
 <div class="editor-tools"><div class="mode-tabs"><button id="mode-edit" aria-pressed="true">编辑</button><button id="mode-preview" aria-pressed="false">预览</button><button id="show-guide">查看独立导读</button></div><div><button id="history-button" class="quiet">历史</button><button id="copy-note" class="quiet">复制</button><button id="save-note" class="accent">保存</button></div></div>
 <button id="compare-conflict" class="conflict-banner" hidden>仓库版本已更新 · 点击对照后继续保存</button>
-<textarea id="reading-editor" aria-label="浮窗笔记编辑器" spellcheck="false" placeholder="记录研究问题、关键创新和待验证的想法。&#10;&#10;在 PDF 划选文字后，点击「编辑笔记」可继续记录。"></textarea>
 <div id="paper-quick-entry" hidden><label for="paper-entry" class="small">快速添加到本文献笔记</label><textarea id="paper-entry" rows="2" placeholder="输入内容后按回车添加；Shift + 回车换行"></textarea></div>
 <p id="paper-autosave-hint" class="small" hidden>笔记自动保存 · 回车提交，Shift + 回车换行</p>
+<button id="paper-edit-toggle" class="quiet" hidden>编辑正文</button>
+<article id="paper-rendered" class="prose selectable" hidden></article>
+<textarea id="reading-editor" aria-label="浮窗笔记编辑器" spellcheck="false" placeholder="记录研究问题、关键创新和待验证的想法。&#10;&#10;在 PDF 划选文字后，点击「编辑笔记」可继续记录。"></textarea>
 <article id="dock-preview" class="prose selectable" hidden></article><article id="dock-guide" class="prose selectable" hidden></article>
 <details class="editor-extra"><summary>更多操作</summary><div class="more-tools"><button id="generate-reading">✧ 生成文献导读</button><button id="zotero-notes">查看 Zotero 笔记</button><button id="export-zotero">存入 Zotero</button></div></details>
 <p id="ai-notice" class="small" hidden>将当前论文的全部 PDF 文字发送至所选 AI 服务，结果作为未保存草稿追加。</p>

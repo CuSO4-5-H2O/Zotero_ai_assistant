@@ -144,6 +144,8 @@ window.ResearchUI = (() => {
       text=active.value.slice(active.selectionStart,active.selectionEnd);rect=active.getBoundingClientRect();
     }else{
       const selection=window.getSelection(),element=selection?.anchorNode?.parentElement,focus=selection?.focusNode?.parentElement;
+      // AI answers offer direct excerpting; do not start translation over that action.
+      if(element?.closest('.chat-answer')||focus?.closest('.chat-answer'))return null;
       if(!selection||selection.isCollapsed||!element?.closest('.selectable,.prose,.pdf-page')||!focus?.closest('.selectable,.prose,.pdf-page')||element.closest('#translation-panel,#ds-dialog')||focus.closest('#translation-panel,#ds-dialog'))return null;
       text=selection.toString();const rects=selection.getRangeAt(0).getClientRects();rect=rects.length?rects[rects.length-1]:selection.getRangeAt(0).getBoundingClientRect();
       const page=element.closest('.pdf-page');if(page)source+=' · PDF 第 '+page.dataset.page+' 页';
