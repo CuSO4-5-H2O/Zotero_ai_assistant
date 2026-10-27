@@ -65,10 +65,12 @@ class DockBridge:
         if event.get('selection_kind') not in {None,'original','translation','summary'}:raise ValueError('选文类型不合法')
         if event.get('clip_kind') not in {None,'translation','summary'}:raise ValueError('摘抄类型不合法')
         if 'autosave' in event and type(event['autosave']) is not bool:raise ValueError('保存选项不合法')
+        if 'background' in event and type(event['background']) is not bool:raise ValueError('后台摘录选项不合法')
+        if event.get('background') and (event['type']!='clip' or (event.get('note_id') is not None and not re.fullmatch(r'[a-f0-9]{32}',str(event['note_id'])))):raise ValueError('后台摘录目标不合法')
         with self.condition:
             state = self.state(channel)
             state['sequence'] += 1
-            message = {key: event[key] for key in ['type', 'paper_id', 'note_id','text', 'page', 'title', 'attachment_key', 'library_id', 'source_uri','intent','clip_kind','autosave','selection_kind'] if key in event}
+            message = {key: event[key] for key in ['type', 'paper_id', 'note_id','text', 'page', 'title', 'attachment_key', 'library_id', 'source_uri','intent','clip_kind','autosave','selection_kind','background'] if key in event}
             state['events'].append({**message, 'sequence': state['sequence']})
             state['events'] = state['events'][-80:]
             state['touched'] = time.monotonic()

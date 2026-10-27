@@ -18,11 +18,23 @@ def cited_pages(text,count):
             if 1<=start<=end<=count:result.update(range(start,end+1))
     return sorted(result)
 
+def notes_only_request(pid,question,selection=None):
+    if pid=='workspace':return True
+    creation=re.match(r'^(?:请帮我|帮我|请)?(?:新建|创建)(?:一[篇个份])?笔记',question)
+    literal=re.search(r'[，,：:]\s*(?:正文|内容)(?:为|是|[：:])?',question)
+    if creation and literal and not selection and not re.search(r'根据|总结|分析|提炼|比较|对比',question[:literal.end()]+question[literal.end():].lstrip()[:4]):return True
+    # Unknown questions and short follow-ups belong to the selected paper by default.
+    # Only unmistakable repository operations may skip its full text.
+    operation=bool(re.search(r'新建|创建|删除|恢复|重命名|移入回收站|列出|搜索|查找|打开|追加|写入|添加|移除',question))
+    target=bool(re.search(r'笔记|工程文件|工程目录|仓库|报告|标签',question))
+    analysis=bool(re.search(r'正文|文章|论文|PDF|本文|这篇|这段|方法|创新|实验|证据|推导|图表|公式|总结|根据|解释|分析|比较|对比',question,re.I))
+    return operation and target and not analysis and not selection
+
 class PaperChat:
-    def __init__(self,papers,atomic,render,vault=None,projects=None,native=None,literature=None):
+    def __init__(self,papers,atomic,render,vault=None,projects=None,native=None,literature=None,reports=None):
         self.papers=papers;self.atomic=atomic;self.render=render
         self.vault=vault
-        self.projects=projects;self.native=native;self.literature=literature
+        self.projects=projects;self.native=native;self.literature=literature;self.reports=reports
         self.lock=threading.RLock();self.busy=set()
 
     def path(self,pid):return self.papers.folder(pid)/'chat.json'
@@ -95,7 +107,7 @@ class PaperChat:
     def restore_action(self,pid,action_id):
         with self.lock:
             if pid in self.busy:raise ValueError('请等待当前回答完成后恢复笔记')
-            toolkit=ResearchTools(self.vault,self.papers,pid,self.atomic,'用户点击恢复笔记或工程文件',projects=self.projects,native=self.native,literature=self.literature)
+            toolkit=ResearchTools(self.vault,self.papers,pid,self.atomic,'用户点击恢复笔记或工程文件',projects=self.projects,native=self.native,literature=self.literature,reports=self.reports)
             record=next((r for r in toolkit.logs() if r['id']==action_id and r['action'] in {'delete_note','trash_project_file'}),None)
             if not record:raise ValueError('未找到这条删除记录')
             if record['action']=='trash_project_file':
@@ -126,7 +138,7 @@ class PaperChat:
             self.busy.add(pid)
         try:
             manage_notes=self.vault is not None
-            notes_only=manage_notes and (not re.search(r'论文|PDF|本文|这篇|方法|创新|实验|证据|推导|图表|公式',question,re.I) or bool(re.search('删除|恢复|重命名|移入回收站',question)) or bool(re.search('标签',question) and not re.search('根据|总结|内容|自动',question)))
+            notes_only=manage_notes and notes_only_request(pid,question,selection)
             pages={'status':'notes-only','pages':[]} if notes_only else self.papers.pages(pid)
             if pages.get('status')!='ready' and not manage_notes:raise ValueError('当前 PDF 无可用文字层，请先关联可复制文字的 PDF；暂不支持扫描件图像问答')
             source='' if notes_only else '\n\n'.join(f"[PDF 第 {p['number']} 页]\n{p['text']}" for p in pages['pages'])
@@ -145,8 +157,13 @@ class PaperChat:
             # Never begin the provider conversation with an orphaned assistant turn.
             if history and history[0]['role']=='assistant':history.pop(0)
             system=SYSTEM+'\n当前日期：'+time.strftime('%Y-%m-%d')+'\n\n'+ASSISTANT_RULES+'\n\n当前论文：'+self.papers.item(pid)['title']+'\n\n<PDF_TEXT>\n'+source+'\n</PDF_TEXT>'
-            toolkit=ResearchTools(self.vault,self.papers,pid,self.atomic,question,data['version'],projects=self.projects,native=self.native,literature=self.literature) if manage_notes else None
+            if source.strip():system+='\n本轮已从 Zotero 本地 PDF 读取正文，共 '+str(len(pages['pages']))+' 页。以本轮 PDF_TEXT 为准；历史回复若声称没有正文，不代表当前读取状态，不要据此要求用户重新上传。'
+            toolkit=ResearchTools(self.vault,self.papers,pid,self.atomic,question,data['version'],projects=self.projects,native=self.native,literature=self.literature,reports=self.reports) if manage_notes else None
             if toolkit:system+=toolkit.instructions
+            current_page=payload.get('current_page')
+            if current_page is not None:
+                if type(current_page)!=int or current_page<1:raise ValueError('当前 PDF 页码无效')
+                if not notes_only and any(p['number']==current_page for p in pages['pages']):system+='\nZotero 阅读器当前显示 PDF 第 '+str(current_page)+' 页。“这一页”优先指该页；全文仍在 PDF_TEXT 中，页码是 PDF 文件页序。'
             if toolkit and payload.get('context_note'):
                 context_note=payload['context_note']
                 if re.fullmatch('[a-f0-9]{32}',str(context_note)):

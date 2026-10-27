@@ -1,28 +1,39 @@
 /* Streaming through Zotero's native XHR, as supported by the reader sandbox. */
 var ResearchNotebookTranslation={
   selectionLifetime(event,box,dispose){
-    const docs=new Set(),sourceDocs=new Set(),listeners=[];let inside=false,closed=false,seen=false;
+    const docs=new Set(),sourceDocs=new Set(),listeners=[],timers=new Set();let inside=false,hovering=false,focusProtected=true,sourceCancelled=false,closed=false;
     const collect=(win,depth=0)=>{if(!win||depth>5)return;try{const d=win.document;if(docs.has(d))return;docs.add(d);for(let i=0;i<win.frames.length;i++)collect(win.frames[i],depth+1);}catch(_){}};
     collect(event.doc.defaultView);docs.add(event.doc);
     for(const view of [event.reader?._internalReader?._primaryView,event.reader?._internalReader?._secondaryView])collect(view?._iframeWindow);
-    const protectedNow=()=>inside||[...docs].some(d=>box.contains(d.activeElement));
+    const protectedNow=()=>inside||hovering||focusProtected&&[...docs].some(d=>box.contains(d.activeElement));
     const on=(node,name,fn)=>{node.addEventListener(name,fn,true);listeners.push(()=>node.removeEventListener(name,fn,true));};
     const close=()=>{if(!closed)dispose();};
+    const sourceSelected=()=>{
+      for(const d of sourceDocs){try{if(d.getSelection()?.toString().trim())return true;}catch(_){}}
+      let known=sourceDocs.size>0;
+      for(const view of [event.reader?._internalReader?._primaryView,event.reader?._internalReader?._secondaryView]){
+        try{if(Array.isArray(view?._selectionRanges)){known=true;if(view._selectionRanges.some(range=>range&&range.collapsed!==true))return true;}}catch(_){}
+      }
+      return known?false:null;
+    };
+    const check=()=>{if(!closed&&!protectedNow()&&(sourceCancelled||sourceSelected()===false))close();};
+    // PDF selection ranges are updated by Zotero after capture-phase handlers.
+    const scheduleCheck=()=>{check();for(const delay of [0,80]){const timer=event.doc.defaultView.setTimeout(()=>{timers.delete(timer);check();},delay);timers.add(timer);}};
+    on(box,'pointerenter',()=>{hovering=true;focusProtected=true;});
+    on(box,'pointerleave',()=>{hovering=false;focusProtected=false;scheduleCheck();});
+    on(box,'focusout',()=>{scheduleCheck();});
     for(const d of docs){
       try{if(d.getSelection()?.toString().trim())sourceDocs.add(d);}catch(_){}
-      on(d,'pointerdown',e=>{inside=box.contains(e.target);if(!inside)close();});
-      on(d,'pointerup',()=>{inside=false;});
-      on(d,'keydown',e=>{if(e.key==='Escape')close();});
-      on(d,'selectionchange',()=>{if(protectedNow()||!sourceDocs.size)return;const selected=[...sourceDocs].some(s=>{try{return !!s.getSelection()?.toString().trim();}catch(_){return false;}});if(!selected)close();});
+      on(d,'pointerdown',e=>{inside=box.contains(e.target);focusProtected=inside;if(!inside)hovering=false;});
+      on(d,'pointerup',e=>{inside=false;if(!box.contains(e.target))scheduleCheck();});
+      on(d,'keyup',scheduleCheck);
+      on(d,'selectionchange',scheduleCheck);
     }
-    // Follow Zotero's own selection-popup lifecycle even when selection lives in
-    // a reader frame whose DOM selection isn't exposed to the extension event.
-    const marker=event.doc.createElement('span');marker.hidden=true;event.append(marker);
-    // Construct in the privileged compartment: content-window constructors cannot
-    // read privileged option dictionaries through Zotero's sandbox boundary.
-    const Observer=Zotero.getMainWindow().MutationObserver;let observer;
-    if(Observer){observer=new Observer(()=>{if(marker.isConnected)seen=true;else if(seen&&!protectedNow())close();});observer.observe(event.doc.documentElement,{childList:true,subtree:true});seen=marker.isConnected;}
-    return ()=>{closed=true;observer?.disconnect();for(const remove of listeners)remove();marker.remove();};
+    // Losing Zotero's transient selection toolbar is not proof the PDF selection
+    // was cancelled (it also happens when clicking the excerpt control).
+    const stop=()=>{closed=true;for(const remove of listeners)remove();for(const timer of timers)event.doc.defaultView.clearTimeout(timer);timers.clear();};
+    stop.selectionCancelled=()=>{sourceCancelled=true;check();};
+    return stop;
   },
   selectedText(output){const start=output.selectionStart,end=output.selectionEnd;return Number.isInteger(start)&&Number.isInteger(end)&&end>start?output.value.slice(start,end).trim():'';},
   dimensions(source,result,win){

@@ -136,19 +136,24 @@ class LiteratureService:
                 if data['status'] in {'queued','running','cancelling'}:data['status']='interrupted';data['message']='服务重启导致任务中断；已保存的条目保留，可重新导入去重。'
                 self.jobs[job_id]=data
             return json.loads(json.dumps(self.jobs[job_id]))
-    def start(self,candidate_ids,fetch_pdf=True,collection_name=None,attachment_mode='default'):
+    def start(self,candidate_ids,fetch_pdf=True,collection_name=None,attachment_mode='default',target_subdir=None):
         if collection_name is not None and (not isinstance(collection_name,str) or not 1<=len(collection_name.strip())<=120 or any(ord(c)<32 for c in collection_name)):raise ValueError('集合名称无效')
         collection_name=collection_name.strip() if collection_name else None
         if not isinstance(attachment_mode,str) or attachment_mode not in {'default','linked_codex'}:raise ValueError('附件模式无效')
+        if target_subdir is not None:
+            if not isinstance(target_subdir,str) or len(target_subdir)>200:raise ValueError('目标子目录无效')
+            target_subdir=target_subdir.replace('\\','/').strip()
+            if not target_subdir or any(not part or part in {'.','..'} or part[-1:] in {' ','.'} or re.search(r'[<>:"|?*\x00-\x1f]',part) or re.fullmatch(r'(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?',part) for part in target_subdir.split('/')):raise ValueError('目标子目录必须是 storage/codex 内的相对路径')
+            if attachment_mode!='linked_codex':raise ValueError('目标子目录仅用于 linked_codex 附件模式')
         if not isinstance(candidate_ids,list) or not 1<=len(candidate_ids)<=20 or any(not isinstance(i,str) for i in candidate_ids) or type(fetch_pdf)!=bool:raise ValueError('请选择1—20篇检索结果')
         ids=list(dict.fromkeys(candidate_ids))
         with self.lock:
             if any(i not in self.candidates for i in ids):raise ValueError('候选已过期或未经检索核验，请重新搜索；禁止凭空生成 DOI 入库')
             for job in self.jobs.values():
-                if job['status'] in {'queued','running','cancelling'} and job['candidate_ids']==ids and job['fetch_pdf']==fetch_pdf and job.get('collection_name')==collection_name and job.get('attachment_mode','default')==attachment_mode:return self.get(job['id'])
+                if job['status'] in {'queued','running','cancelling'} and job['candidate_ids']==ids and job['fetch_pdf']==fetch_pdf and job.get('collection_name')==collection_name and job.get('attachment_mode','default')==attachment_mode and job.get('target_subdir')==target_subdir:return self.get(job['id'])
             if len(self.busy)>=3:raise ValueError('已有3个入库任务，请等待或停止后续导入')
             job={'id':uuid.uuid4().hex,'candidate_ids':ids,'fetch_pdf':fetch_pdf,'status':'queued','created':time.time(),'total':len(ids),'processed':0,'rows':[],'cancel_requested':False,'metadata_saved':0,'pdf_available':0,'pdf_downloaded':0,'message':'等待导入；PDF 将由 Zotero 写入 storage'}
-            job.update(collection_name=collection_name,attachment_mode=attachment_mode)
+            job.update(collection_name=collection_name,attachment_mode=attachment_mode,target_subdir=target_subdir)
             self.jobs[job['id']]=job;self.busy.add(job['id']);self.save(job)
             self.pool.submit(self.run,job['id'],[dict(self.candidates[i]) for i in ids]);return self.get(job['id'])
     def cancel(self,job_id):
@@ -172,7 +177,7 @@ class LiteratureService:
                     for url in candidate.get('pdf_urls',[]):
                         try:metadata['pdf_urls'].append(public_url(url))
                         except ValueError:pass
-                    outcome=self.native({'action':'literature_import','metadata':metadata,'fetch_pdf':job['fetch_pdf'],'collection_name':job.get('collection_name'),'attachment_mode':job.get('attachment_mode','default')})
+                    outcome=self.native({'action':'literature_import','metadata':metadata,'fetch_pdf':job['fetch_pdf'],'collection_name':job.get('collection_name'),'attachment_mode':job.get('attachment_mode','default'),'target_subdir':job.get('target_subdir')})
                     if not outcome.get('ok'):raise ValueError(outcome.get('error','Zotero 导入失败'))
                     record=self.register(outcome['metadata'])
                     row.update(ok=True,paper_id=record['id'],item_key=outcome['metadata']['item_key'],created=outcome['created'],pdf_status=outcome['pdf_status'],message=outcome.get('message',''),path=outcome['metadata'].get('path',''),location_exception=outcome.get('location_exception',False),sha256=outcome.get('sha256',''))

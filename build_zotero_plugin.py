@@ -8,7 +8,7 @@ def main():
     parser.add_argument('--embed-root',action='store_true',help='Embed this local checkout path for a personal installation; never commit the generated package.')
     args=parser.parse_args()
     source=ROOT/'zotero-plugin';manifest=json.loads((source/'manifest.json').read_text('utf-8'))
-    files=['manifest.json','bootstrap.js','notebook.js','dock.js','updater.js','translation.js','literature.js','README.md']
+    files=['manifest.json','bootstrap.js','notebook.js','dock.js','updater.js','translation.js','literature.js','integrations.js','README.md']
     output=ROOT/'dist'/('research-notebook-'+manifest['version']+'.xpi');output.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
         for name in files:

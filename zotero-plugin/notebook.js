@@ -67,19 +67,22 @@ var ResearchNotebookPlugin={
     if(this.windows.has(win))return;
     const doc=win.document,nodes=[];
     const launch=doc.createElementNS('http://www.w3.org/1999/xhtml','button');launch.id='research-notebook-launch';launch.textContent='科研仓库';launch.title='打开科研笔记仓库 · Ctrl + Alt + N';launch.style.cssText='font:12px system-ui;padding:5px 10px;margin:0 7px;border:1px solid #b4cec1;border-radius:6px;background:#edf6ef;color:#225e48;cursor:pointer;white-space:nowrap;';
-    launch.addEventListener('click',()=>this.openPage(undefined,win).catch(error=>this.error(error,win)));
+    launch.addEventListener('click',()=>this.openActiveOrHome(win).catch(error=>this.error(error,win)));
     const toolbar=doc.getElementById('zotero-items-toolbar')||doc.getElementById('zotero-toolbar');
     if(toolbar)toolbar.append(launch);else{launch.style.cssText+='position:fixed;bottom:12px;right:18px;z-index:2147482000;';doc.documentElement.append(launch);}nodes.push(launch);
     // The library toolbar belongs to an inactive deck while a PDF tab is selected.
     // Keep a separate launcher outside that deck, above both library and reader.
-    const global=doc.createElementNS('http://www.w3.org/1999/xhtml','button');global.id='research-notebook-global-launch';global.textContent='科研仓库';global.title='打开仓库首页 · Ctrl + Alt + N';global.setAttribute('aria-label','打开科研仓库');global.style.cssText='position:fixed!important;right:24px!important;bottom:18px!important;top:auto!important;left:auto!important;z-index:2147483500!important;display:block!important;visibility:visible!important;box-sizing:border-box;margin:0;padding:9px 16px;border:1px solid #bdd5c8;border-radius:18px;background:#216b55;color:#fff;box-shadow:0 3px 15px #143c3533;font:600 12px system-ui;cursor:pointer;';global.addEventListener('click',()=>this.openPage(undefined,win).catch(error=>this.error(error,win)));doc.documentElement.append(global);nodes.push(global);
-    const shortcut=e=>{if(e.ctrlKey&&e.altKey&&e.key.toLowerCase()==='n'){e.preventDefault();this.openPage(undefined,win).catch(error=>this.error(error,win));}};win.addEventListener('keydown',shortcut);nodes.push(()=>win.removeEventListener('keydown',shortcut));
+    const global=doc.createElementNS('http://www.w3.org/1999/xhtml','button');global.id='research-notebook-global-launch';global.textContent='科研仓库';global.title='打开科研仓库并关联当前 PDF · Ctrl + Alt + N';global.setAttribute('aria-label','打开科研仓库');global.style.cssText='position:fixed!important;right:24px!important;bottom:18px!important;top:auto!important;left:auto!important;z-index:2147483500!important;visibility:visible!important;box-sizing:border-box;margin:0;padding:9px 16px;border:1px solid #bdd5c8;border-radius:18px;background:#216b55;color:#fff;box-shadow:0 3px 15px #143c3533;font:600 12px system-ui;cursor:pointer;';global.addEventListener('click',()=>this.openActiveOrHome(win).catch(error=>this.error(error,win)));doc.documentElement.append(global);nodes.push(global);
+    const shortcut=e=>{if(e.ctrlKey&&e.altKey&&e.key.toLowerCase()==='n'){e.preventDefault();this.openActiveOrHome(win).catch(error=>this.error(error,win));}};win.addEventListener('keydown',shortcut);nodes.push(()=>win.removeEventListener('keydown',shortcut));
     const action=(label,handler,id)=>{const item=doc.createXULElement('menuitem');item.id=id;item.setAttribute('label',label);item.addEventListener('command',()=>Promise.resolve(handler()).catch(error=>this.error(error,win)));return item;};
     const tools=doc.getElementById('menu_ToolsPopup');
     if(tools){
       const menu=doc.createXULElement('menu');menu.id='research-notebook-tools';menu.setAttribute('label','科研笔记仓库');
       const popup=doc.createXULElement('menupopup');
       popup.append(action('打开科研笔记仓库',()=>this.openPage(),'rn-open-vault'),action('精读当前选中文献',()=>this.openSelected(win),'rn-read-selected'),action('关联报告与 Zotero 已有 PDF',()=>this.sync(win),'rn-sync-storage'));
+      for(const [command,label] of [['fetch','补取全文（多来源自动回退）'],['jasminum','茉莉花：识别所选中文 PDF 附件'],['linter','Linter：规范所选题录'],['citation','Easier Citation：引用到 Word']]){
+        popup.append(action(label,async()=>{const result=await ResearchNotebookIntegrations.run(this,win,command);ResearchNotebookIntegrations.lastResult=result;if(command!=='citation')Services.prompt.alert(win,'文献工具',result.message);},'rn-integration-'+command));
+      }
       popup.append(action('检查本地插件更新',async()=>{const result=await ResearchNotebookUpdater.check(true);Services.prompt.alert(win,'科研笔记仓库',result.state==='installed'?'已更新至 '+result.version:result.state==='current'?'已是本机最新版本 '+result.version:'暂无可用本地更新');},'rn-check-update'));
       menu.append(popup);tools.append(menu);nodes.push(menu);
     }
@@ -128,6 +131,38 @@ var ResearchNotebookPlugin={
       return xhr.response;
     }catch(error){throw new Error(error.xmlhttp?.response?.error||error.message||'本地服务请求失败');}
   },
+  activeReader(win){
+    const selected=win?.Zotero_Tabs?.selectedID;
+    const tabReader=selected?Zotero.Reader?.getByTabID?.(selected):null;
+    if(tabReader)return tabReader;
+    return (Zotero.Reader?._readers||[]).find(reader=>reader._window===win&&win!==Zotero.getMainWindow())||null;
+  },
+  async openActiveOrHome(win){
+    const reader=this.activeReader(win);
+    if(reader)return this.openSelected(win,reader);
+    return this.openPage(undefined,win);
+  },
+  followReader(win,dock){
+    let last=null,busy=false,run=0;
+    const tick=async()=>{
+      if(!this.active||win.closed||dock.panel.style.display==='none')return;
+      const reader=this.activeReader(win),id=reader?.itemID;
+      if(!id){last=null;run++;return;}
+      if(id===last||busy)return;
+      busy=true;const turn=++run;
+      try{
+        const item=await Zotero.Items.getAsync(id);
+        if(item?.attachmentContentType!=='application/pdf')return;
+        const file=await item.getFilePathAsync();if(!file||!await IOUtils.exists(file))return;
+        const record=await this.registerSelected(win,reader);
+        if(turn!==run||this.activeReader(win)?.itemID!==id||dock.panel.style.display==='none')return;
+        await this.request('/api/dock/publish',{channel:dock.channel,event:{type:'paper',paper_id:record.id,intent:'follow_reader'}});
+        dock.pid=record.id;last=id;
+      }catch(error){Zotero.logError(error);}finally{busy=false;}
+    };
+    const timer=win.setInterval(tick,900);dock.cleanups.push(()=>{run++;win.clearInterval(timer);});
+    tick();
+  },
   async openPage(pid,host,preserveEditor=false){
     const state=await this.ensureService(),win=host||Zotero.getMainWindow();
     if(!win?.document)throw new Error('请先打开 Zotero 阅读窗口');
@@ -139,7 +174,7 @@ var ResearchNotebookPlugin={
         if(!this.active||win.closed)throw new Error('科研笔记浮窗已关闭');
         const next=ResearchNotebookDock.create(this,win,channel);this.docks.set(win,next);
         const url=`http://127.0.0.1:${state.port}/?session=${encodeURIComponent(state.key)}&host=zotero&view=dock&channel=${channel}${pid?'&paper='+encodeURIComponent(pid):''}`;
-        next.browser.loadURI(Services.io.newURI(url),{triggeringPrincipal:Services.scriptSecurityManager.getSystemPrincipal()});return next;
+        next.browser.loadURI(Services.io.newURI(url),{triggeringPrincipal:Services.scriptSecurityManager.getSystemPrincipal()});this.followReader(win,next);return next;
       })();this.docks.set(win,{creating});
       try{dock=await creating;}catch(error){this.docks.delete(win);throw error;}
     }
@@ -184,7 +219,9 @@ var ResearchNotebookPlugin={
     await this.request('/api/dock/publish',{channel:dock.channel,event:{type:'open_note',note_id:noteId}});
     return dock;
   },
-  noteExcerptMarkdown(record,reader,annotation,text,kind='translation'){
+  async noteExcerptMarkdown(record,reader,annotation,text,kind='translation'){
+    let includeSource=false;try{includeSource=(await IOUtils.readJSON(this.path('.runtime','note-settings.json'))).include_source===true;}catch(_){}
+    if(!includeSource)return '\n\n'+String(text).trim().split(/\r?\n/).map(line=>'> '+line).join('\n')+'\n';
     const att=Zotero.Items.get(reader.itemID),page=Number.isInteger(annotation?.position?.pageIndex)?annotation.position.pageIndex+1:null;
     const libraryPath=Zotero.URI.getLibraryPath(att.libraryID),scope=libraryPath.startsWith('groups/')?libraryPath:'library';
     const uri='zotero://open-pdf/'+scope+'/items/'+att.key+(page?'?page='+page:'');
@@ -198,32 +235,42 @@ var ResearchNotebookPlugin={
     const target=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultTarget',true)||'paper';
     if(target==='paper')return this.savePaperText(reader,annotation,text,kind);
     const win=reader?._window||Zotero.getMainWindow(),record=await this.registerSelected(win,reader);
-    const addition=this.noteExcerptMarkdown(record,reader,annotation,text,kind),noteId=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultNoteId',true);
+    const addition=await this.noteExcerptMarkdown(record,reader,annotation,text,kind),noteId=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultNoteId',true);
     if(target==='new'){
       const stamp=new Date().toISOString().slice(0,16).replace('T',' ');
       const note=await this.request('/api/notes',{title:'文献摘录 · '+record.id+' · '+stamp,folder:'文献笔记',tags:[record.id],content:addition.trim()});
       Zotero.Prefs.set('extensions.researchnotebook.notes.defaultNoteId',note.id,true);
-      await this.openVaultNote(note.id,win);return {target:'new',note};
+      Zotero.Prefs.set('extensions.researchnotebook.notes.defaultTarget','existing',true);
+      Zotero.Prefs.set('extensions.researchnotebook.notes.defaultNoteTitle',note.title,true);
+      return {target:'new',note};
     }
     if(target!=='existing')throw new Error('默认保存位置无效，请重新选择');
     if(!/^[a-f0-9]{32}$/.test(noteId||''))throw new Error('请先搜索并选择一篇已有笔记');
+    const dock=this.docks?.get(win);
+    if(dock?.channel&&dock.browser?.isConnected!==false){
+      const queued=await this.publishBackgroundExcerpt(dock,record,reader,annotation,text,kind,noteId);return {...queued,target:'existing',queued:true};
+    }
     const current=await this.request('/api/notes/'+encodeURIComponent(noteId));
-    if(current.folder==='调研报告')throw new Error('报告存放在独立报告区，不能作为笔记目标');
+    if(current.trashed||current.folder==='调研报告')throw new Error('目标笔记已删除或属于报告，不能作为摘录目标');
     const updated=await this.request('/api/notes/'+encodeURIComponent(noteId),{version:current.version,content:(current.content||'').trimEnd()+addition,title:current.title,folder:current.folder,tags:current.tags||[]});
-    await this.openVaultNote(updated.id,win);return {target:'existing',note:updated};
+    return {target:'existing',note:updated};
   },
   async savePaperText(reader,annotation,text,kind='translation'){
-    // Let the open editor merge the excerpt with its unsaved draft, then save.
-    // Direct backend appends can leave that editor on an obsolete version.
-    const queued=await this.addTranslatedExcerpt(reader,annotation,text,kind);
-    return {...queued,target:'paper',queued:true};
+    return this.addTranslatedExcerpt(reader,annotation,text,kind);
+  },
+  async publishBackgroundExcerpt(dock,record,reader,annotation,text,kind,noteId){
+    const att=Zotero.Items.get(reader.itemID),page=Number.isInteger(annotation?.position?.pageIndex)?annotation.position.pageIndex+1:null;
+    const path=Zotero.URI.getLibraryPath(att.libraryID),scope=path.startsWith('groups/')?path:'library';
+    return this.request('/api/dock/publish',{channel:dock.channel,event:{type:'clip',background:true,paper_id:record.id,...(noteId?{note_id:noteId}:{}),title:record.title,text:text.trim(),page,attachment_key:att.key,library_id:att.libraryID,clip_kind:kind,autosave:true,source_uri:'zotero://open-pdf/'+scope+'/items/'+att.key+(page?'?page='+page:'')}});
   },
   async addTranslatedExcerpt(reader,annotation,text,kind='translation'){
     if(typeof text!=='string'||!text.trim()||text.length>12000)throw new Error('请先在译文中选中 1—12,000 字符');
-    const win=reader?._window||Zotero.getMainWindow(),record=await this.registerSelected(win,reader),dock=await this.openPage(record.id,win,false),att=Zotero.Items.get(reader.itemID);
-    const page=Number.isInteger(annotation?.position?.pageIndex)?annotation.position.pageIndex+1:null;
-    const path=Zotero.URI.getLibraryPath(att.libraryID),scope=path.startsWith('groups/')?path:'library';
-    return this.request('/api/dock/publish',{channel:dock.channel,event:{type:'clip',paper_id:record.id,title:record.title,text:text.trim(),page,attachment_key:att.key,library_id:att.libraryID,clip_kind:kind,autosave:true,source_uri:'zotero://open-pdf/'+scope+'/items/'+att.key+(page?'?page='+page:'')}});
+    const win=reader?._window||Zotero.getMainWindow(),record=await this.registerSelected(win,reader),dock=this.docks?.get(win);
+    // Existing editors merge their own drafts, but are never shown or focused.
+    if(dock?.channel&&dock.browser?.isConnected!==false){const queued=await this.publishBackgroundExcerpt(dock,record,reader,annotation,text,kind);return {...queued,target:'paper',queued:true};}
+    const doc=await this.request('/api/papers/'+record.id),addition=await this.noteExcerptMarkdown(record,reader,annotation,text,kind);
+    await this.request('/api/papers/'+record.id+'/reading',{version:doc.reading.version,content:doc.reading.content.trimEnd()+addition});
+    return {target:'paper',queued:false};
   },
   async openSelectionWorkspace(reader,annotation,intent='edit',selectionKind='original'){
     const win=reader?._window||Zotero.getMainWindow(),record=await this.registerSelected(win,reader),dock=await this.openPage(record.id,win,true),att=Zotero.Items.get(reader.itemID);
@@ -233,12 +280,27 @@ var ResearchNotebookPlugin={
     return dock;
   },
   async nativeAction(data){
+    if(data.action==='current_reader'){
+      const win=Zotero.getMainWindow(),tab=win?.Zotero_Tabs?.selectedID;
+      let reader=tab?Zotero.Reader.getByTabID(tab):null;
+      const active=Services.wm.getMostRecentWindow(null);
+      const detached=(Zotero.Reader._readers||[]).find(r=>r._window===active&&r._window!==win);
+      if(detached)reader=detached;
+      if(!reader)return {ok:true,available:false,reason:'当前 Zotero 标签不是 PDF 阅读器'};
+      const attachment=await Zotero.Items.getAsync(reader.itemID);
+      if(attachment?.attachmentContentType!=='application/pdf')return {ok:true,available:false,reason:'当前阅读器不是 PDF'};
+      const path=await attachment.getFilePathAsync();if(!path||!await IOUtils.exists(path))throw new Error('当前 Zotero PDF 附件的本地文件不可用');
+      const record=await this.registerSelected(win,reader);
+      const state=reader._internalReader?._state?.primaryViewState||reader._state?.primaryViewState;
+      const index=state?.pageIndex??reader._internalReader?._primaryView?._pageIndex;
+      return {ok:true,available:true,paper:record,attachment_key:attachment.key,page:Number.isInteger(index)?index+1:null};
+    }
+    if(data.action==='integration_capabilities')return {ok:true,version:this.version,...ResearchNotebookIntegrations.capabilities(),menus:[...this.windows.keys()].map(win=>({fetch:!!win.document.getElementById('rn-integration-fetch'),jasminum:!!win.document.getElementById('rn-integration-jasminum'),linter:!!win.document.getElementById('rn-integration-linter'),citation:!!win.document.getElementById('rn-integration-citation')}))};
+    if(data.action==='integration_last_result')return ResearchNotebookIntegrations.lastResult||{ok:true,rows:[]};
     if(data.action==='literature_move_imports_to_storage')return ResearchNotebookLiterature.moveImportsToStorage();
     if(data.action==='literature_capabilities')return ResearchNotebookLiterature.capabilities();
     if(data.action==='literature_attach_uploaded_pdf')return ResearchNotebookLiterature.attachUploadedPDF(data,this.root);
     if(data.action==='literature_import')return ResearchNotebookLiterature.save(data,this.root);
-    if(data.action==='literature_design_note')return ResearchNotebookLiterature.designNote(data);
-    if(data.action==='literature_dataset_collection')return ResearchNotebookLiterature.datasetCollection(data);
     if(data.action==='literature_attach_supplements')return ResearchNotebookLiterature.attachSupplements(data,this.root);
     if(data.action==='layout_probe'){
       const win=Zotero.getMainWindow(),doc=win.document,pref='extensions.researchnotebook.layout.dock',previous=Zotero.Prefs.get(pref,true),native={x:win.screenX,y:win.screenY};let dock;
@@ -261,7 +323,7 @@ var ResearchNotebookPlugin={
         finally{Zotero.getMainWindow().clearInterval(timer);}
         const translated=!!output?.value,characters=output?.value?.length||0,completedMs=Date.now()-started;
         const originalAdd=this.saveTextToTarget;let captured=null,excerptEnabled=false;
-        try{this.saveTextToTarget=async(_r,_a,value)=>{captured=value;return {target:'paper'};};output.setSelectionRange(0,2);const selected=doc.createEvent('Event');selected.initEvent('select',true,false);output.dispatchEvent(selected);const action=[...box.querySelectorAll('button')].find(b=>b.textContent==='摘抄到笔记');excerptEnabled=!action.disabled;action.click();await new Promise(resolve=>Zotero.getMainWindow().setTimeout(resolve,40));}
+        try{this.saveTextToTarget=async(_r,_a,value)=>{captured=value;return {target:'paper'};};output.setSelectionRange(0,2);const selected=doc.createEvent('Event');selected.initEvent('select',true,false);output.dispatchEvent(selected);const action=[...box.querySelectorAll('button')].find(b=>b.textContent==='摘录到笔记');excerptEnabled=!action.disabled;action.click();await new Promise(resolve=>Zotero.getMainWindow().setTimeout(resolve,40));}
         finally{this.saveTextToTarget=originalAdd;}
         const excerptSelectedOnly=captured===output.value.slice(0,2).trim();
         const originalOpen=this.openSelectionWorkspace;let assistantSelected=false,assistantOriginal=false;
@@ -332,27 +394,29 @@ var ResearchNotebookPlugin={
   async sync(win){const data=await this.request('/api/zotero/sync',{}),extra=data.supplements||{},local=data.local_pdfs||{},removed=(extra.local_copies_removed||0)+(local.local_copies_removed||0)+(data.local_duplicate_pdfs_removed||0),left=[...(extra.left_in_project||[]),...(local.left_in_project||[])];Services.prompt.alert(win,'科研笔记仓库',`新增关联 ${data.linked.length} 篇文献。\nPDF 入库：${(extra.imported||0)+(local.imported||0)} 份新增，${(extra.reused||0)+(local.reused||0)} 份复用。\n已清理 ${removed} 份校验相同的仓库副本；未处理 ${left.length} 份（会保留原文件）。`);},
   readerToolbar(event){const button=event.doc.createElement('button');button.textContent='科研精读';button.title='使用当前 Zotero PDF 进入科研笔记仓库';button.addEventListener('click',()=>this.openSelected(Zotero.getMainWindow(),event.reader).catch(error=>this.error(error)));const home=event.doc.createElement('button');home.textContent='仓库';home.title='直接查看笔记和报告';home.addEventListener('click',()=>this.openPage().catch(error=>this.error(error)));event.append(button);event.append(home);},
   selectionPopup(event){
-    const {doc,params,reader}=event,text=params.annotation?.text?.trim();if(doc.activeElement?.closest?.('.rn-auto-translation'))return;if(!text){this.selectionStates.get(reader)?.dispose?.();return;}
+    const {doc,params,reader}=event,text=params.annotation?.text?.trim();if(!text){const state=this.selectionStates.get(reader);if(state?.selectionCancelled){state.selectionCancelled();return;}if(state?.box?.matches?.(':hover'))return;state?.dispose?.();return;}if(doc.activeElement?.closest?.('.rn-auto-translation'))return;
+    const previous=this.selectionStates.get(reader),sourcePage=params.annotation?.position?.pageIndex;
+    if(previous?.sourceText===text&&previous.sourcePage===sourcePage&&previous.box?.isConnected)return;
     this.selectionStates.get(reader)?.dispose?.();
-    const state={run:0,timer:null};this.selectionStates.set(reader,state);
+    const state={run:0,timer:null,sourceText:text,sourcePage};this.selectionStates.set(reader,state);
     const box=doc.createElement('section');box.className='rn-auto-translation';box.setAttribute('aria-label','选文翻译与总结');box.style.cssText='position:fixed;z-index:2147482000;top:22px;right:22px;height:340px;min-width:180px;min-height:220px;max-height:calc(100vh - 16px);white-space:normal;overflow:hidden;box-sizing:border-box;display:flex;flex-direction:column;border:1px solid #bed4c9;border-radius:12px;background:#fff;color:#24493e;box-shadow:0 14px 60px #143b3b35;font:13px system-ui;';
+    state.box=box;
     const style=doc.createElement('style');style.textContent='.rn-auto-translation,.rn-auto-translation *{box-sizing:border-box}.rn-auto-translation .rn-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 12px;font-size:12px;flex:none;border-top:1px solid #e0ebe5}.rn-auto-translation button,.rn-auto-translation select{font:inherit;border:0;background:transparent;color:inherit;cursor:pointer;padding:5px 7px;border-radius:5px}.rn-auto-translation button:hover{background:#e8f1eb}.rn-auto-translation .rn-edit-note{background:#237563;color:white}.rn-auto-translation textarea{user-select:text!important;-moz-user-select:text!important;cursor:text!important;}.rn-auto-translation button:disabled{opacity:.45}';
     const header=doc.createElement('header');header.style.cssText='display:flex;gap:6px;align-items:center;flex:none;background:#eff5f1;padding:8px 12px;';
     const title=doc.createElement('strong');title.textContent='选文翻译';title.style.cssText='font-size:12px;flex:1;';
     const output=doc.createElement('textarea');output.setAttribute('aria-label','译文，可直接编辑或复制');output.spellcheck=false;output.placeholder='正在翻译…';output.style.cssText='display:block;width:100%;flex:1;min-height:70px;white-space:pre-wrap;overflow:auto;line-height:1.85;font:15px/1.85 system-ui;padding:12px 16px;border:0;outline:0;resize:none;background:transparent;color:inherit;';
     const actions=doc.createElement('div');actions.className='rn-actions';
     const target=doc.createElement('select');target.setAttribute('aria-label','翻译目标语言');for(const name of ['简体中文','English']){const option=doc.createElement('option');option.value=name;option.textContent=name==='简体中文'?'中文':name;target.append(option);}
-    const copy=doc.createElement('button');copy.textContent='复制';copy.disabled=true;
     const summary=doc.createElement('button');summary.textContent='总结';summary.title='总结当前选中的原文';
     const assistant=doc.createElement('button');assistant.textContent='✧';assistant.title='带着当前选文打开 AI 助手';assistant.setAttribute('aria-label','AI 助手');
     assistant.addEventListener('click',async()=>{const selected=ResearchNotebookTranslation.selectedText(output);const kind=selected?(mode==='summary'?'summary':'translation'):'original';assistant.disabled=true;try{await this.openSelectionWorkspace(reader,{...params.annotation,text:selected||text},'assistant',kind);}catch(error){hint.textContent=error.message;}finally{assistant.disabled=false;}});
     const translate=doc.createElement('button');translate.textContent='翻译';
-    const note=doc.createElement('button');note.textContent='加入本文笔记';note.disabled=true;
-    const excerpt=doc.createElement('button');excerpt.textContent='摘抄到笔记';excerpt.title='先在译文中选中文字，再摘抄到当前笔记';excerpt.disabled=true;
+    const excerpt=doc.createElement('button');excerpt.textContent='摘录到笔记';excerpt.disabled=true;
+    const destinationPanel=doc.createElement('section');destinationPanel.className='rn-note-destination';destinationPanel.hidden=true;
     const destinationRow=doc.createElement('div');destinationRow.style.cssText='display:flex;align-items:center;gap:8px;padding:5px 12px 2px;flex:none;';
     const destinationLabel=doc.createElement('small');destinationLabel.textContent='默认保存到';destinationLabel.style.cssText='font-size:10px;opacity:.7;white-space:nowrap;';
     const destination=doc.createElement('select');destination.setAttribute('aria-label','默认笔记保存位置');destination.style.cssText='min-width:0;flex:1;border:1px solid #dce9e1;border-radius:5px;padding:5px 7px;background:#fff;font:11px system-ui;color:inherit;';
-    for(const [value,label] of [['paper','本文献阅读笔记'],['new','新建仓库笔记'],['existing','追加到已有笔记']]){const option=doc.createElement('option');option.value=value;option.textContent=label;destination.append(option);}
+    for(const [value,label] of [['paper','本文默认笔记'],['existing','其他已有笔记'],['new','新建笔记（保存后记住）']]){const option=doc.createElement('option');option.value=value;option.textContent=label;destination.append(option);}
     destination.value=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultTarget',true)||'paper';
     if(!['paper','new','existing'].includes(destination.value))destination.value='paper';
     const notePicker=doc.createElement('div');notePicker.style.cssText='display:flex;gap:6px;padding:3px 12px 5px;flex:none;';notePicker.hidden=destination.value!=='existing';
@@ -365,37 +429,37 @@ var ResearchNotebookPlugin={
     const searchExistingNotes=async query=>{const run=++noteSearchRun,selected=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultNoteId',true);try{const data=await this.request('/api/notes?q='+encodeURIComponent(query));if(run!==noteSearchRun)return;noteChoices.replaceChildren();const placeholder=doc.createElement('option');placeholder.value='';placeholder.textContent='请选择已有笔记';noteChoices.append(placeholder);for(const note of data.notes||[])if(note.folder!=='调研报告'&&!note.trashed)addNoteOption(note,note.id===selected);if(noteChoices.options.length===1)placeholder.textContent='没有匹配笔记，可改选新建笔记';}catch(error){if(run===noteSearchRun)hint.textContent=error.message;}};
     destination.addEventListener('change',()=>{Zotero.Prefs.set('extensions.researchnotebook.notes.defaultTarget',destination.value,true);notePicker.hidden=destination.value!=='existing';notePicker.style.display=notePicker.hidden?'none':'flex';if(destination.value==='existing'){noteSearch.value='';searchExistingNotes('');hint.textContent=savedNoteId?'已载入上次选择的笔记':'搜索或从列表选择已有笔记';}else hint.textContent='默认保存位置已更新';});
     noteSearch.addEventListener('input',()=>{clearTimeout(noteSearchTimer);noteSearchTimer=setTimeout(()=>searchExistingNotes(noteSearch.value),220);});
-    noteChoices.addEventListener('change',()=>{if(noteChoices.value)Zotero.Prefs.set('extensions.researchnotebook.notes.defaultNoteId',noteChoices.value,true);});
-    const hint=doc.createElement('small');hint.textContent='译文可编辑复制 · PDF 时默认保存到本文献阅读笔记';hint.style.cssText='padding:0 16px 6px;opacity:.68;flex:none;font-size:10px;';
-    const edit=doc.createElement('button');edit.textContent='编辑笔记';edit.className='rn-edit-note';
-    const create=doc.createElement('button');create.textContent='新建笔记';
-    const reports=doc.createElement('button');reports.textContent='查看报告';
-    for(const [button,intent] of [[edit,'edit'],[create,'new'],[reports,'reports']])button.addEventListener('click',async()=>{try{await this.openSelectionWorkspace(reader,params.annotation,intent);}catch(error){hint.textContent=error.message;}});
+    noteChoices.addEventListener('change',()=>{if(noteChoices.value){Zotero.Prefs.set('extensions.researchnotebook.notes.defaultNoteId',noteChoices.value,true);Zotero.Prefs.set('extensions.researchnotebook.notes.defaultNoteTitle',noteChoices.selectedOptions[0]?.textContent||'',true);updateExcerpt();}});
+    const hint=doc.createElement('small');hint.textContent='Ctrl+C 复制 · 右键“摘录到笔记”设置保存位置';hint.style.cssText='padding:0 16px 6px;opacity:.68;flex:none;font-size:10px;';
+    const edit=doc.createElement('button');edit.textContent='打开笔记';edit.className='rn-edit-note';
+    edit.addEventListener('click',async()=>{try{const mode=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultTarget',true)||'paper',id=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultNoteId',true);if(mode==='existing'&&/^[a-f0-9]{32}$/.test(id||''))await this.openVaultNote(id,reader?._window||Zotero.getMainWindow());else await this.openSelectionWorkspace(reader,params.annotation,'edit');}catch(error){hint.textContent=error.message;}});
+    const doneDestination=doc.createElement('button');doneDestination.textContent='完成';doneDestination.addEventListener('click',()=>{destinationPanel.hidden=true;updateExcerpt();});
+    const toggleDestination=event=>{event.preventDefault();event.stopPropagation();destinationPanel.hidden=!destinationPanel.hidden;if(!destinationPanel.hidden){destination.value=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultTarget',true)||'paper';notePicker.hidden=destination.value!=='existing';notePicker.style.display=notePicker.hidden?'none':'flex';if(destination.value==='existing')searchExistingNotes(noteSearch.value);}ResearchNotebookTranslation.fit(box,output,text,output.value,doc.defaultView);};
+    excerpt.addEventListener('contextmenu',toggleDestination);
+    excerpt.addEventListener('keydown',event=>{if(event.key==='ContextMenu'||(event.shiftKey&&event.key==='F10'))toggleDestination(event);});
     const close=doc.createElement('button');close.textContent='×';close.title='关闭译文';close.setAttribute('aria-label','关闭译文');close.style.marginLeft='auto';
-    let translated='',mode='translate';
+    let translated='',mode='translate',savingExcerpt=false;
     const schedule=(next=mode)=>{
-      mode=next;state.manualEdit=false;excerpt.disabled=true;state.subscription?.cancel();const run=++state.run;translated='';copy.disabled=note.disabled=true;copy.textContent='复制';note.textContent='加入本文笔记';output.value='';output.placeholder=mode==='summary'?'正在总结…':'正在翻译…';title.textContent=mode==='summary'?'选文总结':'选文翻译';hint.textContent='译文可编辑复制 · PDF 时默认保存到本文献阅读笔记';
+      mode=next;state.manualEdit=false;excerpt.disabled=true;state.subscription?.cancel();const run=++state.run;translated='';output.value='';output.placeholder=mode==='summary'?'正在总结…':'正在翻译…';title.textContent=mode==='summary'?'选文总结':'选文翻译';hint.textContent='Ctrl+C 复制 · 右键“摘录到笔记”设置保存位置';
       state.pending=(async()=>{
         if(!this.active||state.run!==run)return;
         try{
           if(text.length>12000)throw new Error('选文过长，请分段选择');
-          state.subscription=ResearchNotebookTranslation.subscribe(this,text,target.value,partial=>{if(this.active&&state.run===run&&box.isConnected!==false){translated=partial;if(!ResearchNotebookTranslation.selectedText(output))output.value=partial;copy.disabled=false;}},mode);
+          state.subscription=ResearchNotebookTranslation.subscribe(this,text,target.value,partial=>{if(this.active&&state.run===run&&box.isConnected!==false){translated=partial;if(!ResearchNotebookTranslation.selectedText(output))output.value=partial;updateExcerpt();}},mode);
           const result=await state.subscription.promise;
           if(!this.active||state.run!==run||box.isConnected===false)return;
           if(result.truncated)throw new Error('译文未完整返回，请缩短选文后重试');
-          translated=result.text;if(!ResearchNotebookTranslation.selectedText(output))output.value=translated;copy.disabled=note.disabled=false;
+          translated=result.text;if(!ResearchNotebookTranslation.selectedText(output))output.value=translated;updateExcerpt();
         }catch(error){if(this.active&&state.run===run){hint.textContent=error.message;output.placeholder='可重新点击翻译或总结';}}
       })();
     };
     target.addEventListener('change',()=>schedule('translate'));summary.addEventListener('click',()=>schedule('summary'));translate.addEventListener('click',()=>schedule('translate'));
     output.addEventListener('beforeinput',()=>{state.manualEdit=true;state.run++;state.subscription?.cancel();hint.textContent='手动编辑中 · 已停止自动覆盖';});
-    output.addEventListener('input',()=>{translated=output.value;copy.disabled=note.disabled=!translated.trim();});
-    const updateExcerpt=()=>{const selected=ResearchNotebookTranslation.selectedText(output);if(!selected&&!state.manualEdit&&translated&&output.value!==translated)output.value=translated;excerpt.disabled=!selected;excerpt.title=selected?'摘抄选中的 '+selected.length+' 字到当前笔记，并保留 PDF 来源':'先在译文中选中文字';};
+    output.addEventListener('input',()=>{translated=output.value;});
+    const updateExcerpt=()=>{const selected=ResearchNotebookTranslation.selectedText(output);if(!selected&&!state.manualEdit&&translated&&output.value!==translated)output.value=translated;excerpt.disabled=savingExcerpt||!selected.trim();const mode=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultTarget',true)||'paper',where=mode==='paper'?'本文默认笔记':mode==='new'?'新建笔记':Zotero.Prefs.get('extensions.researchnotebook.notes.defaultNoteTitle',true)||'所选笔记';excerpt.title=(selected?'摘录选中的 '+selected.length+' 字':'请先选中要摘录的文字')+' → '+where+'；右键设置保存位置';};
     for(const type of ['select','selectionchange','mouseup','keyup','input'])output.addEventListener(type,updateExcerpt);
-    excerpt.addEventListener('click',async()=>{const selected=ResearchNotebookTranslation.selectedText(output);if(!selected)return;excerpt.disabled=true;try{const saved=await this.saveTextToTarget(reader,params.annotation,selected,mode==='summary'?'summary':'translation');hint.textContent=saved.queued?'已送入本文笔记，请查看工作区保存状态':saved.target==='paper'?'已加入本文献阅读笔记':saved.target==='new'?'已新建笔记并保存选文':'已追加到所选笔记';}catch(error){hint.textContent=error.message;}finally{updateExcerpt();}});
-    copy.addEventListener('click',()=>{const selected=output.value.slice(output.selectionStart,output.selectionEnd);Components.classes['@mozilla.org/widget/clipboardhelper;1'].getService(Components.interfaces.nsIClipboardHelper).copyString(selected||output.value);copy.textContent='已复制';});
-    note.addEventListener('click',async()=>{note.disabled=true;try{const saved=await this.saveTextToTarget(reader,params.annotation,output.value,mode==='summary'?'summary':'translation');note.textContent=saved.queued?'已送入本文笔记':saved.target==='paper'?'已加入本文笔记':saved.target==='new'?'已新建笔记':'已追加笔记';hint.textContent=saved.queued?'工作区将保留草稿并保存，请查看底部状态':saved.target==='paper'?'已保存到 PDF 对应的文献阅读笔记':saved.target==='new'?'已新建仓库笔记并保存译文':'译文已追加到所选笔记';}catch(error){hint.textContent=error.message;note.disabled=false;}});
-    header.append(title,translate,summary,assistant,target,close);actions.append(edit,create,reports,copy,excerpt,note);box.append(style,header,output,destinationRow,notePicker,hint,actions);destinationRow.append(destinationLabel,destination);notePicker.append(noteSearch,noteChoices);(doc.body||doc.documentElement).append(box);if(destination.value==='existing')searchExistingNotes('');
+    excerpt.addEventListener('click',async()=>{const content=ResearchNotebookTranslation.selectedText(output).trim();if(!content||savingExcerpt)return;savingExcerpt=true;updateExcerpt();try{const saved=await this.saveTextToTarget(reader,params.annotation,content,mode==='summary'?'summary':'translation');hint.textContent=saved.queued?'摘录已提交，正在后台保存':saved.target==='paper'?'已保存到本文默认笔记':saved.target==='new'?'已新建笔记，后续摘录将继续追加':'已追加到所选笔记';destination.value=Zotero.Prefs.get('extensions.researchnotebook.notes.defaultTarget',true)||'paper';}catch(error){hint.textContent=error.message;}finally{savingExcerpt=false;updateExcerpt();}});
+    header.append(title,translate,summary,assistant,target,close);actions.append(edit,excerpt);destinationPanel.append(destinationRow,notePicker,doneDestination);box.append(style,header,output,destinationPanel,hint,actions);destinationRow.append(destinationLabel,destination);notePicker.append(noteSearch,noteChoices);(doc.body||doc.documentElement).append(box);
     ResearchNotebookTranslation.fit(box,output,text,'',doc.defaultView);
     const layout=ResearchNotebookTranslation.floating(box,header,doc.defaultView,'translation',300,190);
     for(const type of ['pointerdown','mousedown','mouseup','click','dblclick','keydown','keyup'])box.addEventListener(type,e=>e.stopPropagation());
@@ -404,7 +468,7 @@ var ResearchNotebookPlugin={
     this.selectionPanels.add(state);doc.defaultView.addEventListener('unload',state.dispose,{once:true});close.addEventListener('click',state.dispose);
     // Translation must start even if optional lifecycle observation is unavailable.
     schedule();
-    try{stopLifetime=ResearchNotebookTranslation.selectionLifetime(event,box,state.dispose);}catch(error){
+    try{stopLifetime=ResearchNotebookTranslation.selectionLifetime(event,box,state.dispose);state.selectionCancelled=()=>stopLifetime?.selectionCancelled?.();}catch(error){
       this.translationDiagnostics=(this.translationDiagnostics||[]).slice(-9);this.translationDiagnostics.push({stage:'lifecycle',error:String(error).slice(0,200)});Zotero.logError(error);
     }
   }

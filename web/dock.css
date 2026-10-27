@@ -31,3 +31,22 @@
 .literature-settings{margin:12px 0;padding:12px;border:1px solid #dfe8e1;border-radius:8px}.literature-settings summary{cursor:pointer;color:#366c58}.literature-settings textarea{box-sizing:border-box;width:100%;padding:10px;border:1px solid #c9d9d0;border-radius:6px;resize:vertical;font:inherit}.literature-filters select{max-width:100%;padding:6px;border:1px solid #d9e3dd;border-radius:5px}.literature-filters input[type=checkbox]{width:auto}.literature-settings .search-row{flex-wrap:wrap}.literature-settings input{min-width:170px}
 .dock-status{flex-wrap:wrap;gap:3px 12px}#dock-connection-status{flex-basis:100%;color:#93622e;overflow-wrap:anywhere}
 .starred-result{position:relative;margin:9px 0}.starred-result>.result-card{width:100%;margin:0;padding-right:48px}.starred-result>.star-toggle{position:absolute;right:10px;top:9px;font-size:20px;padding:3px 7px;color:#95a59c}.starred-result.is-starred>.result-card{border-color:#d8bf77;background:#fffdf5}.starred-result.is-starred>.star-toggle,.star-toggle[aria-pressed=true]{color:#ae7a12!important}.editor-heading{gap:10px}.star-filter[aria-pressed=true]{color:#996d12!important;background:#fff6d9!important}
+
+/* Compact, readable navigation in a resizable Zotero dock. */
+.notebook-dock{background:#f7faf8;color:#203f37;font:13px/1.6 "Microsoft YaHei","Segoe UI",sans-serif}
+.dock-top{padding:12px 18px 8px}.dock-top h1{font-size:17px;margin:0;letter-spacing:0}
+.dock-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:7px 14px 10px;background:#fff}
+.dock-tabs button{border:0;border-radius:7px;padding:8px 4px;text-align:center;white-space:nowrap;font-size:12px;color:#5f786d}
+.dock-tabs button[aria-selected=true]{background:#e5f2ec;color:#16634d;font-weight:600}
+.notebook-dock>main{padding:16px 18px 26px}.dock-status{padding:7px 18px}
+#paper-context{padding:12px 14px;margin:0 0 16px;background:#f0f7f3;border:1px solid #dfece5;border-radius:10px}
+#context-title{font-size:14px;line-height:1.45;margin:8px 0 4px}.editor-heading{margin:12px 0 8px}
+.editor-tools{gap:6px;margin:10px 0}.more-tools{border-top:1px solid #e7eee9;margin-top:14px}
+.result-list{gap:8px}.result-card{border-radius:9px;padding:12px 14px}
+.dock-empty{padding:48px 10px;color:#708b7d}.dock-empty span{color:#7ca38f}
+@media(max-width:420px){.dock-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}.dock-top{padding:10px 14px 5px}.notebook-dock>main{padding:13px 14px 24px}}
+/* Keep secondary operations available without duplicating the primary tabs. */
+#show-guide,#new-note-inline,#generate-reading{display:none!important}
+.editor-extra{margin-top:14px;border-top:1px solid #e7eee9;padding-top:8px;color:#638175}
+.editor-extra>summary{cursor:pointer;font-size:11px;padding:4px 0}
+.editor-extra .more-tools{border:0;margin:0;padding:6px 0 0}

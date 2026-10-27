@@ -240,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 17, 'release': (ROOT/'VERSION').read_text(encoding='utf-8').strip()})
+        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 17, 'release': (ROOT/'VERSION').read_text(encoding='utf-8').strip(),'assistant_report_reading':all(getattr(getattr(self.server,name,None),'reports',None) is not None for name in ('chat','workspace_chat'))})
         if path.path == '/auth/callback':
             import html
             try:message=self.server.chatgpt.callback({k:v[0] for k,v in parse_qs(path.query).items()});status=200
@@ -270,6 +270,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_bytes(content.encode(),'text/html; charset=utf-8')
                 return self.send_bytes(source.read_bytes(),'text/csv; charset=utf-8' if source.suffix=='.csv' else 'application/zip',extra={'Content-Disposition':'attachment; filename="ReportEvidence'+source.suffix+'"'})
             if path.path == '/api/deepseek/settings': return self.js(self.server.deepseek.public())
+            if path.path == '/api/notes/settings': return self.js(self.server.note_preferences.public())
             if path.path == '/api/ai/settings':return self.js(self.server.ai.public())
             if path.path == '/api/ai/catalog':return self.js(self.server.ai.catalog(refresh=parse_qs(path.query).get('refresh')==['1']))
             if path.path == '/api/ai/models':return self.js({'models':self.server.chatgpt.models(refresh=parse_qs(path.query).get('refresh')==['1'])})
@@ -369,6 +370,16 @@ class Handler(BaseHTTPRequestHandler):
                     if note.get('trashed') or note.get('folder')=='调研报告':raise ValueError('目标笔记不可用，请重新选择')
                 elif payload['event'].get('type')!='home':self.server.papers.item(payload['event'].get('paper_id'))
                 return self.js(self.server.dock.publish(payload.get('channel'),payload.get('event')))
+            if self.path == '/api/zotero/current':
+                try:bridge=json.loads((ROOT/'.runtime'/'zotero-bridge.json').read_text(encoding='utf-8'))
+                except (OSError,ValueError):raise ValueError('请先启用 Zotero 科研笔记仓库插件') from None
+                req=urllib.request.Request('http://127.0.0.1:23119/research-notebook/action',data=json.dumps({'bridge_token':bridge['token'],'action':'current_reader'}).encode(),headers={'Content-Type':'application/json'})
+                with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=20) as response:result=json.load(response)
+                if not result.get('ok'):raise ValueError(result.get('error','当前 PDF 同步失败'))
+                if result.get('available'):
+                    ref=self.server.papers.item(result['paper']['id'])
+                    result['paper']={'id':ref['id'],'title':ref['title'],'zotero':ref.get('zotero')}
+                return self.js(result)
             if self.path == '/api/zotero/action':
                 if payload.get('action') in {'get_tags','add_paper_tags','remove_paper_tags'}:return self.js(native_action(ROOT,self.server.papers,payload))
                 pid=str(payload.get('paper_id',''));paper=self.server.papers.item(pid)
@@ -403,6 +414,7 @@ class Handler(BaseHTTPRequestHandler):
                     with urllib.request.urlopen(request,timeout=10) as result:return self.js(json.load(result))
                 except OSError:raise ValueError('Zotero 插件未就绪，请在 Zotero 中启用科研笔记仓库插件') from None
             if self.path == '/api/deepseek/settings': return self.js(self.server.deepseek.save(payload))
+            if self.path == '/api/notes/settings': return self.js(self.server.note_preferences.save(payload))
             if self.path == '/api/ai/settings':return self.js(self.server.ai.save(payload))
             if self.path == '/api/ai/login':
                 import webbrowser
@@ -415,8 +427,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/literature/settings':
                 result=self.server.literature.settings.save(payload);self.server.literature.cache.clear();return self.js(result)
             if self.path == '/api/literature/identifiers':return self.js(self.server.literature.search_identifiers(payload.get('text')))
-            if self.path == '/api/literature/import':return self.js(self.server.literature.start(payload.get('candidate_ids'),payload.get('fetch_pdf',True),payload.get('collection_name'),payload.get('attachment_mode','default')),202)
-            if self.path == '/api/literature/design-note':return self.js(native_action(ROOT,self.server.papers,{'action':'literature_design_note',**{k:payload[k] for k in ('item_key','content','version') if k in payload}}))
+            if self.path == '/api/literature/import':return self.js(self.server.literature.start(payload.get('candidate_ids'),payload.get('fetch_pdf',True),payload.get('collection_name'),payload.get('attachment_mode','default'),payload.get('target_subdir')),202)
             cancel_literature=re.fullmatch('/api/literature/tasks/([a-f0-9]{32})/stop',self.path)
             if cancel_literature:return self.js(self.server.literature.cancel(cancel_literature[1]))
             if self.path == '/api/projects/import':return self.js(self.server.projects.bind().import_file(payload.get('path'),payload.get('data')))
@@ -529,6 +540,9 @@ def main():
     server.zotero = ZoteroStorage(server.papers,args.zotero_storage)
     server.literature=LiteratureService(args.config/'literature',atomic,lambda payload:native_action(ROOT,server.papers,payload),server.zotero.register_parent)
     server.chat.literature=server.workspace_chat.literature=server.literature
+    server.chat.reports=server.workspace_chat.reports=server.reports
+    from note_preferences import NotePreferences
+    server.note_preferences=NotePreferences(args.config/'note-settings.json',atomic)
     server.dock = DockBridge(args.config/'dock-channels.json',atomic)
     atomic(args.state, json.dumps({'app': 'research-notebook', 'pid': os.getpid(), 'port': server.server_port, 'key': server.key, 'started': now()}))
     server.serve_forever()
