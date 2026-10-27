@@ -22,6 +22,11 @@ def ensure_service():
  try:
   data=alive()
   if not data:
+   # Only update before spawning a new backend, never swap code under a running
+   # service. Non-Git installations and locally edited checkouts are untouched.
+   from github_update import run_startup
+   update=run_startup(ROOT,str(ROOT/'.runtime'/'python'/'python.exe'))
+   if update.get('state')=='build_failed':raise RuntimeError('更新后插件构建失败；源码已同步，请先修复本机构建。')
    logs=(ROOT/'.runtime'/'server.log').open('a',encoding='utf-8')
    subprocess.Popen([str(ROOT/'.runtime'/'python'/'pythonw.exe'),str(ROOT/'server.py'),'--resume'],cwd=ROOT,stdout=logs,stderr=logs,creationflags=subprocess.CREATE_NO_WINDOW)
    for _ in range(60):

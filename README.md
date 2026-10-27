@@ -1,4 +1,4 @@
-# Zotero AI Assistant · 2.0.19
+# Zotero AI Assistant · 2.0.20
 
 在 Zotero 原窗口中阅读 PDF、写 Markdown 笔记、划词翻译、总结和向 AI 提问。支持星标置顶、独立报告、工程文件、对话归档与在线文献检索。
 
@@ -23,7 +23,7 @@ py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 ```
 
 1. 运行 `.\.runtime\python\pythonw.exe launcher.py` 启动本地服务。
-2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.19.xpi`。
+2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」安装本机生成的 `dist/research-notebook-2.0.20.xpi`。
 3. 点击右下角 **科研仓库** 或按 **Ctrl + Alt + N**；PDF 中点 **科研精读**。
 4. 在设置中配置自己的 AI 服务。未配置时仍可管理笔记和文件。
 
@@ -43,7 +43,9 @@ py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 
 ## 更新与限制
 
-更新源码和依赖后，运行 `py -3.12 build_zotero_plugin.py --embed-root`。插件核对本机 `dist/latest.json` 的版本、ID、兼容性和 SHA-256 后更新；可从 Zotero 工具菜单手动检查。**当前不自动从 GitHub 下载新版。** 更新后台代码后，先保存草稿，再重启本地服务。
+通过上述 `git clone` 安装后，本地后台每次从停止状态启动时，会检查 GitHub 的 `main` 分支。确认本地受版本管理的源码没有改动、版本可快进且依赖没有变化后，自动更新源码并为本机重建插件；Zotero 的本地更新器随后检查、校验并安装新插件。运行中的后台不会被强制重启：如后台一直运行，更新要等它下次启动。
+
+已有 2.0.19 或更早版本需先按常规方式更新源码并重新运行构建脚本一次，才能获得这套更新器。ZIP 方式安装、非 `main` 分支、本地改过源码、依赖发生变化或网络不可用时，自动更新会跳过；状态记录在 `.runtime/github-update-status.json`。依赖变化时请先更新源码、运行安装脚本，再重启本地后台。个人笔记、PDF、报告、工程文件和配置不在版本库中。当前 GitHub 不提供单独 XPI 的直接自动升级，以免插件与旧后台不匹配。
 
 扫描 PDF 需要外部 OCR。Undermind 目前采用网页搜索后粘贴 DOI 导入，尚无插件内一键账号连接。Elicit 网页登录不等于本插件 API 权限。全文下载受出版社、机构权限和网络限制，不保证全部成功。ChatGPT 登录适配器为实验能力，Plus 订阅不等于通用 API 额度。
 
