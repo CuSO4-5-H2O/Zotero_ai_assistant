@@ -55,7 +55,7 @@ var ResearchChat=(()=>{
       const tools=document.createElement('div');tools.className='chat-answer-tools';
       tools.append(button('复制回答',async()=>{try{await navigator.clipboard.writeText(text);status('回答已复制');}catch(_){status('请选中回答文字复制',true);}}));
       const pid=paper.id;
-      const saveAnswer=button('追加到本文献笔记',async()=>{saveAnswer.disabled=true;try{const data=await api('/api/papers/'+pid),reading=data.reading;await api('/api/papers/'+pid+'/reading',{version:reading.version,content:reading.content.trimEnd()+'\n\n## AI 问答\n\n'+(metadata.question?'**问题：** '+metadata.question+'\n\n':'')+text+'\n'});saveAnswer.textContent='已追加';status('已追加到 '+pid+' 文献笔记，旧内容保留在历史版本');document.dispatchEvent(new CustomEvent('research-chat-saved',{detail:{paper_id:pid}}));}catch(e){saveAnswer.disabled=false;status(e.message,true);}});
+      const saveAnswer=button('追加到本文献笔记',async()=>{saveAnswer.disabled=true;try{const content='## AI 问答\n\n'+(metadata.question?'**问题：** '+metadata.question+'\n\n':'')+text+'\n';await ResearchUI.appendSelectionNote('paper:'+pid,content);saveAnswer.textContent='已追加';status('已追加到 '+pid+' 文献笔记，旧内容保留在历史版本');}catch(e){saveAnswer.disabled=false;status(e.message,true);}});
       if(pid!=='workspace')tools.append(saveAnswer);
       for(const page of metadata.cited_pages||[]){
         tools.append(button('PDF 第 '+page+' 页',async()=>{try{if(paper?.id!==pid)return;if(paper.zotero)await api('/api/zotero/action',{paper_id:pid,action:'open_pdf',page});else window.open('/api/papers/'+pid+'/pdf#page='+page,'_blank','noopener');}catch(e){status(e.message,true);}}));

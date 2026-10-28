@@ -225,7 +225,7 @@
   document.addEventListener('research-append-selection',event=>{
     const detail=event.detail,key=detail.note_id.startsWith('paper:')?detail.note_id:'vault:'+detail.note_id;
     if(!documentNote||documentNote.key!==key||documentNote.kind==='report')return;detail.handled=true;
-    detail.promise=(async()=>{if(!appendedSelections.has(detail.operation_id)){$('reading-editor').value=$('reading-editor').value.trimEnd()+'\n\n'+detail.content;appendedSelections.add(detail.operation_id);changed();}if(!await save())throw new Error('选文已加入当前草稿，但保存未成功，请处理保存提示后重试');return {id:detail.note_id,title:documentNote.title};})();
+    detail.promise=(async()=>{if(!appendedSelections.has(detail.operation_id)){$('reading-editor').value=$('reading-editor').value.trimEnd()+'\n\n'+detail.content;appendedSelections.add(detail.operation_id);changed();}if(!await save())throw new Error('选文已加入当前草稿，但保存未成功，请处理保存提示后重试');appendedSelections.delete(detail.operation_id);return {id:detail.note_id,title:documentNote.title};})();
   });
   document.addEventListener('research-open-note',event=>{const id=event.detail.note_id;if(id.startsWith('paper:'))openPaper(id.slice(6));else{showPane('notes');openNote(id);}});
   document.addEventListener('research-note-action',event=>{

@@ -97,13 +97,14 @@ window.ResearchUI = (() => {
   async function appendSelectionNote(id,content){
     const operationKey=JSON.stringify([id,content]);if(!selectionOperations.has(operationKey))selectionOperations.set(operationKey,crypto.randomUUID());
     const event={note_id:id,content,operation_id:selectionOperations.get(operationKey),handled:false,promise:null};document.dispatchEvent(new CustomEvent('research-append-selection',{detail:event}));
-    if(event.handled)return await event.promise;
+    const completed=result=>{if(selectionOperations.get(operationKey)===event.operation_id)selectionOperations.delete(operationKey);return result;};
+    if(event.handled)return completed(await event.promise);
     if(id.startsWith('paper:')){
       const pid=id.slice(6),doc=await api('/api/papers/'+pid);await api('/api/papers/'+pid+'/reading',{version:doc.reading.version,content:doc.reading.content.trimEnd()+'\n\n'+content});
-      document.dispatchEvent(new CustomEvent('research-chat-saved',{detail:{paper_id:pid}}));return {id,title:'文献阅读笔记 · '+pid};
+      document.dispatchEvent(new CustomEvent('research-chat-saved',{detail:{paper_id:pid}}));return completed({id,title:'文献阅读笔记 · '+pid});
     }
     const doc=await api('/api/notes/'+id);if(doc.trashed||doc.folder==='调研报告')throw new Error('该目标不是可写入的笔记，请重新选择');
-    const saved=await api('/api/notes/'+id,{version:doc.version,title:doc.title,folder:doc.folder,tags:doc.tags,content:doc.content.trimEnd()+'\n\n'+content});return {id:saved.id,title:saved.title};
+    const saved=await api('/api/notes/'+id,{version:doc.version,title:doc.title,folder:doc.folder,tags:doc.tags,content:doc.content.trimEnd()+'\n\n'+content});return completed({id:saved.id,title:saved.title});
   }
   async function saveSelectionNote(content,title){
     const mode=$('selection-note-mode').value,pid=selectionPaper();let id;
