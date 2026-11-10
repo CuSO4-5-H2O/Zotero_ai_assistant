@@ -1,5 +1,13 @@
 /* Streaming through Zotero's native XHR, as supported by the reader sandbox. */
 var ResearchNotebookTranslation={
+  trimCache(owner){
+    let count=0,characters=0;
+    for(const [key,job] of [...owner.translationJobs].reverse()){
+      if(!job.done)continue;
+      count++;characters+=key.length+(job.text?.length||0);
+      if(count>24||characters>262144)owner.translationJobs.delete(key);
+    }
+  },
   selectionLifetime(event,box,dispose){
     const docs=new Set(),sourceDocs=new Set(),listeners=[],timers=new Set();let inside=false,hovering=false,focusProtected=true,sourceCancelled=false,closed=false;
     const collect=(win,depth=0)=>{if(!win||depth>5)return;try{const d=win.document;if(docs.has(d))return;docs.add(d);for(let i=0;i<win.frames.length;i++)collect(win.frames[i],depth+1);}catch(_){}};
@@ -90,6 +98,12 @@ var ResearchNotebookTranslation={
           if(job.error)throw job.error;consume(response.responseText||response.response||'',true);
           if(!final)throw new Error('译文未完整返回，请重试');job.done=true;return final;
         }catch(error){if(owner.translationJobs.get(key)===job)owner.translationJobs.delete(key);throw job.error||error;}
+        finally{
+          // Cache plain translation data, not XHR response buffers and callbacks.
+          if(job.xhr)job.xhr.onprogress=null;
+          job.xhr=null;buffer='';
+          this.trimCache(owner);
+        }
       })();
     }
     job.listeners.add(onText);if(job.text)onText(job.text);

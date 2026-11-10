@@ -53,6 +53,31 @@ var ResearchNotebookLiterature={
     });
     return {ok:true,target:{key:target.key,name:target.name},moved,added,item_keys:keys,source_keys:sources.map(c=>c.key)};
   },
+  async designNote(data){
+    if(!/^[A-Z0-9]{8}$/.test(data.item_key||'')||typeof data.content!=='string'||!data.content.trim()||data.content.length>100000)throw new Error('设计笔记参数无效');
+    const libraryID=Zotero.Libraries.userLibraryID,item=await Zotero.Items.getByLibraryAndKeyAsync(libraryID,data.item_key);
+    if(!item?.isRegularItem()||item.deleted)throw new Error('未找到文献条目');
+    const marker='Codex metasurface design evidence v1',pref='extensions.researchnotebook.designNote.'+item.key;
+    let note=null;const key=Zotero.Prefs.get(pref,true);
+    if(key)note=await Zotero.Items.getByLibraryAndKeyAsync(libraryID,key);
+    if(note&&(note.deleted||!note.isNote()||note.parentItemID!==item.id))note=null;
+    if(note){const version=Zotero.Utilities.Internal.md5(note.getNote());if(data.version!==version)throw new Error('设计笔记已存在或被修改；先读取笔记并提供当前版本，禁止覆盖');}
+    if(!note){note=new Zotero.Item('note');note.libraryID=libraryID;note.parentID=item.id;}
+    const escape=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    note.setNote('<div data-schema-version="9"><h1>超表面设计卡</h1><p>'+marker+'</p><pre>'+escape(data.content)+'</pre></div>');
+    await note.saveTx();Zotero.Prefs.set(pref,note.key,true);
+    return {ok:true,item_key:item.key,note_key:note.key,version:Zotero.Utilities.Internal.md5(note.getNote())};
+  },
+  async datasetCollection(data){
+    const name='Codex—超表面设计100篇',libraryID=Zotero.Libraries.userLibraryID;
+    const collection=Zotero.Collections.getByLibrary(libraryID).find(c=>c.name===name&&!c.deleted);
+    if(!collection)throw new Error('尚未建立超表面设计集合');
+    const keys=data.remove_keys||[];
+    if(!Array.isArray(keys)||keys.length>100||keys.some(k=>typeof k!=='string'||!/^[A-Z0-9]{8}$/.test(k)))throw new Error('集合条目编号无效');
+    const removed=[];
+    for(const key of keys){const item=await Zotero.Items.getByLibraryAndKeyAsync(libraryID,key);if(!item?.isRegularItem()||item.deleted||!item.inCollection(collection.id))continue;item.removeFromCollection(collection.id);await item.saveTx();removed.push(key);}
+    return {ok:true,collection:{key:collection.key,id:collection.id,name:collection.name},removed};
+  },
   async linkedPDF(item,m,fetchPDF,targetDirectory=this.codexRoot){
     let validExistingPDF=false;
     for(const id of item.getAttachments()){
@@ -61,20 +86,25 @@ var ResearchNotebookLiterature={
       try{const bytes=await this.pdfBytes(path),digest=this.sha256(bytes);validExistingPDF=true;if(m.expected_sha256&&digest!==m.expected_sha256.toLowerCase())continue;return {attachment:child,path,pdfStatus:'existing',sha256:digest,location_exception:!this.within(path,this.codexRoot)};}catch(_){/* damaged attachment is retained */}
     }
     if(m.expected_sha256&&validExistingPDF)throw new Error('source_conflict: 已有 PDF 均不匹配选定全文 SHA256；未复制或修改附件');
-    let bytes=null,source=m.source_path||'',message='';
+    let bytes=null,source=m.source_path||'',message='',acquisitionAttempts=[];
     if(source){
       if(typeof source!=='string'||!this.within(source,this.codexRoot)||!source.toLowerCase().endsWith('.pdf'))throw new Error('链接 PDF 必须位于当前 Zotero 数据目录的 storage/codex');
       bytes=await this.pdfBytes(source);
     }
     if(!bytes&&fetchPDF){
+      if(typeof ResearchNotebookPDFSources!=='undefined'){
+        const acquired=await ResearchNotebookPDFSources.fetch(item,m,{bytesOnly:true});
+        bytes=acquired.bytes;message=acquired.message;acquisitionAttempts=acquired.attempts;
+      }else{
       for(const url of (m.pdf_urls||[]).slice(0,6)){
         if(typeof url!=='string'||!/^https:\/\//i.test(url))continue;
         try{const response=await Zotero.HTTP.request('GET',url,{responseType:'arraybuffer',timeout:60000});
           const incoming=new Uint8Array(response.response);if(incoming.length>64*1024*1024)throw new Error('PDF 过大');this.validatePDF(incoming);bytes=incoming;break;
         }catch(error){Zotero.logError(error);}
       }
+      }
     }
-    if(!bytes)return {attachment:null,path:'',pdfStatus:fetchPDF?'not_found':'not_requested',message:'题录已保存；指定链接未取得有效 PDF，可补充开放全文地址后重试。'};
+    if(!bytes)return {attachment:null,path:'',pdfStatus:fetchPDF?'not_found':'not_requested',acquisitionAttempts,message:message||'题录已保存；指定链接未取得有效 PDF，可补充开放全文地址后重试。'};
     const digest=this.sha256(bytes),path=source||PathUtils.join(targetDirectory,digest+'.pdf');
     if(m.expected_sha256&&digest!==m.expected_sha256.toLowerCase())throw new Error('source_conflict: 来源 PDF SHA256 与选定全文不一致');
     if(!source)await this.ensureTargetDirectory(targetDirectory);
@@ -84,9 +114,9 @@ var ResearchNotebookLiterature={
     if(!attachment)throw new Error('链接附件创建失败，PDF 已保留供重试');
     const actualPath=await attachment.getFilePathAsync();
     if(!actualPath||!await IOUtils.exists(actualPath))throw new Error('Zotero 未返回有效的链接附件路径');
-    return {attachment,path:actualPath,pdfStatus:source?'linked':'downloaded',sha256:digest,location_exception:!this.within(actualPath,this.codexRoot),message};
+    return {attachment,path:actualPath,pdfStatus:source?'linked':'downloaded',sha256:digest,location_exception:!this.within(actualPath,this.codexRoot),acquisitionAttempts,message};
   },
-  capabilities(){return {ok:true,zotero:Zotero.version,attachment_modes:['default','linked_codex'],linked_root:this.codexRoot,integrations:ResearchNotebookIntegrations.capabilities(),addAvailableFile:typeof Zotero.Attachments.addAvailableFile==='function',addAvailablePDF:typeof Zotero.Attachments.addAvailablePDF==='function',addFileFromURLs:typeof Zotero.Attachments.addFileFromURLs==='function',getFileResolvers:typeof Zotero.Attachments.getFileResolvers==='function'};},
+  capabilities(){return {ok:true,zotero:Zotero.version,attachment_modes:['default','linked_codex'],linked_root:this.codexRoot,design_note:true,integrations:ResearchNotebookIntegrations.capabilities(),addAvailableFile:typeof Zotero.Attachments.addAvailableFile==='function',addAvailablePDF:typeof Zotero.Attachments.addAvailablePDF==='function',addFileFromURLs:typeof Zotero.Attachments.addFileFromURLs==='function',getFileResolvers:typeof Zotero.Attachments.getFileResolvers==='function'};},
   async save(data,root){
     const m=data.metadata,mode=data.attachment_mode||'default';
     const validDOI=typeof m?.doi==='string'&&/^10\.\d{4,9}\/[^\s<>]+$/.test(m.doi),validArxiv=typeof m?.url==='string'&&/^https:\/\/arxiv\.org\/abs\/\d{4}\.\d{4,5}(?:v\d+)?$/.test(m.url);
@@ -244,7 +274,7 @@ var ResearchNotebookLiterature={
     await this.ensureCollection(item,options.name);
     if(options.mode==='linked_codex'){
       const linked=await this.linkedPDF(item,m,fetchPDF,options.targetDirectory),field=k=>{try{return item.getField(k)||'';}catch(_){return '';}};
-      return {ok:true,created,pdf_status:linked.pdfStatus,message:linked.message||'',sha256:linked.sha256||'',location_exception:!!linked.location_exception,metadata:{library_id:libraryID,item_key:item.key,attachment_key:linked.attachment?.key||'',path:linked.path||'',title:field('title'),doi:field('DOI'),year:field('date'),venue:field('publicationTitle')||field('proceedingsTitle'),url:field('url'),author:item.getCreators().map(a=>a.lastName||a.name||'').filter(Boolean).join(', ')}};
+      return {ok:true,created,pdf_status:linked.pdfStatus,message:linked.message||'',acquisition_attempts:linked.acquisitionAttempts||[],sha256:linked.sha256||'',location_exception:!!linked.location_exception,metadata:{library_id:libraryID,item_key:item.key,attachment_key:linked.attachment?.key||'',path:linked.path||'',title:field('title'),doi:field('DOI'),year:field('date'),venue:field('publicationTitle')||field('proceedingsTitle'),url:field('url'),author:item.getCreators().map(a=>a.lastName||a.name||'').filter(Boolean).join(', ')}};
     }
     let attachment=null,path=null,pdfStatus=fetchPDF?'not_found':'not_requested',message='',acquisitionAttempts=[],digest='';
     for(const id of item.getAttachments()){

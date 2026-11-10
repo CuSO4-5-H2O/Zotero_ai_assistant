@@ -1,4 +1,4 @@
-# Zotero AI Assistant · 2.0.24
+# Zotero AI Assistant · 2.0.29
 
 在 Zotero 原窗口中阅读 PDF、写 Markdown 笔记、划词翻译、总结和向 AI 提问。支持星标置顶、独立报告、工程文件、对话归档与在线文献检索。
 
@@ -61,3 +61,9 @@ node tests/test_literature_native.cjs
 ```
 
 测试使用隔离目录；凭据测试使用 Windows DPAPI。截图为独立示例仓库。版本见 `VERSION`，许可证：[MIT](LICENSE)。
+
+## 2.0.29 更新
+
+翻译窗口右上角 ⚙ 可关闭当前窗口，或选择“关闭窗口，不再自动翻译”。重新开启：Zotero「工具 → 科研笔记仓库 → 选中文字自动翻译」。
+
+翻译结束后释放请求对象与回调；缓存最多保留 24 条、总计约 26 万字符。

@@ -3,8 +3,15 @@ var ResearchNotebookUpdater = {
   owner:null,timer:null,busy:null,active:false,lastFailure:null,
   start(owner){
     this.owner=owner;this.active=true;
-    this.timer=setInterval(()=>this.check().catch(error=>Zotero.logError(error)),300000);
+    this.timer=setInterval(()=>{this.check().catch(error=>Zotero.logError(error));this.checkRemote();},300000);
     this.check().catch(error=>Zotero.logError(error));
+    this.checkRemote();
+  },
+  checkRemote(){
+    if(!this.active)return;
+    try{const script=this.owner.path('personal_github_update.py'),python=Zotero.File.pathToFile(this.owner.path('.runtime','python','pythonw.exe'));if(!Zotero.File.pathToFile(script).exists()||!python.exists())return;
+      const process=Components.classes['@mozilla.org/process/util;1'].createInstance(Components.interfaces.nsIProcess);process.init(python);const args=[script,'--check'];process.runwAsync(args,args.length,null,false);
+    }catch(error){Zotero.logError(error);}
   },
   stop(){this.active=false;if(this.timer)clearInterval(this.timer);this.timer=null;},
   async report(data){
@@ -12,6 +19,7 @@ var ResearchNotebookUpdater = {
   },
   async check(manual=false){
     if(!this.active)return {state:'disabled'};
+    if(manual)this.checkRemote();
     if(this.busy)return this.busy;
     this.busy=this.perform(manual);
     try{return await this.busy;}finally{this.busy=null;}

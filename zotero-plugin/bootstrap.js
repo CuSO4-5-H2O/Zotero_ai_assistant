@@ -7,6 +7,7 @@ async function startup(data, reason) {
   Services.scriptloader.loadSubScript(data.rootURI+'translation.js',this);
   Services.scriptloader.loadSubScript(data.rootURI+'dock.js',this);
   Services.scriptloader.loadSubScript(data.rootURI+'integrations.js',this);
+  Services.scriptloader.loadSubScript(data.rootURI+'pdf-sources.js',this);
   Services.scriptloader.loadSubScript(data.rootURI+'literature.js',this);
   Services.scriptloader.loadSubScript(data.rootURI+'notebook.js',this);
   NotebookPlugin=ResearchNotebookPlugin;

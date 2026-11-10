@@ -8,7 +8,8 @@ var ResearchNotebookIntegrations={
       custom_resolvers:[...new Set(custom)],linter:typeof Zotero.Linter?.hooks?.onLintInBatch==='function',
       easier_citation:typeof Zotero.ZoteroCitation?.api?.citeItems==='function',
       ethereal_reference:!!Zotero.ZoteroReference,ethereal_style:!!Zotero.ZoteroStyle,
-      pipeline:['publisher_oa','jasminum_cnki','custom_resolvers']};
+      pipeline:typeof ResearchNotebookPDFSources!=='undefined'?['direct','openalex_arxiv','publisher_oa','jasminum_cnki','custom_resolvers','libgen_doi']:['publisher_oa','jasminum_cnki','custom_resolvers'],
+      pdf_engine:typeof ResearchNotebookPDFSources!=='undefined'?'multi-source-v1':'legacy'};
   },
   chineseURL(value){
     try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password&&/(^|\.)(cnki\.net|cnki\.com\.cn)$/.test(url.hostname)?url.href:null;}catch(_){return null;}
@@ -36,6 +37,7 @@ var ResearchNotebookIntegrations={
     return {resolvers,reason:resolvers.length?'':'页面未提供可直接获取的 PDF；保留原题录'};
   },
   async fetchPDF(item,metadata){
+    if(typeof ResearchNotebookPDFSources!=='undefined')return ResearchNotebookPDFSources.fetch(item,metadata);
     const attempts=[];let attachment=null,path='',sha256='';
     const stage=async(name,makeResolvers)=>{
       const trace={source:name,status:'not_found',methods:[]};attempts.push(trace);
