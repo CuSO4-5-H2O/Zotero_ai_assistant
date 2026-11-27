@@ -54,9 +54,11 @@ var ResearchNotebookPlugin={
       helper.runwAsync(args,args.length,null,false);
     }catch(error){Zotero.logError(error);}
     ResearchNotebookUpdater.start(this);
+    this.memoryTimer=setInterval(()=>{if(this.active&&this.lowMemoryMode())this.releaseIdleMemory().catch(error=>Zotero.logError(error));},60000);
   },
   stop(){
     ResearchNotebookUpdater.stop();
+    if(this.memoryTimer)clearInterval(this.memoryTimer);this.memoryTimer=null;
     for(const state of this.selectionPanels||[])state.dispose();this.selectionPanels?.clear();
     for(const job of this.translationJobs?.values()||[]){job.xhr?.abort();job.listeners?.clear();}this.translationJobs?.clear();
     this.active=false;for(const timer of this.selectionTimers||[])clearTimeout(timer);this.selectionTimers?.clear();
@@ -86,6 +88,8 @@ var ResearchNotebookPlugin={
       const menu=doc.createXULElement('menu');menu.id='research-notebook-tools';menu.setAttribute('label','科研笔记仓库');
       const popup=doc.createXULElement('menupopup');
       const autoTranslation=action('选中文字自动翻译',()=>this.setAutomaticTranslation(!this.automaticTranslation()),'rn-auto-translation');autoTranslation.setAttribute('type','checkbox');autoTranslation.setAttribute('checked',String(this.automaticTranslation()));popup.append(autoTranslation);
+      const lowMemory=action('低内存模式（闲置文献休眠）',()=>{const enabled=!this.lowMemoryMode();Zotero.Prefs.set('extensions.researchnotebook.memory.enabled',enabled,true);for(const w of this.windows.keys())w.document.getElementById('rn-low-memory')?.setAttribute('checked',String(enabled));},'rn-low-memory');lowMemory.setAttribute('type','checkbox');lowMemory.setAttribute('checked',String(this.lowMemoryMode()));popup.append(lowMemory);
+      popup.append(action('释放闲置阅读内存',()=>this.releaseIdleMemory(true),'rn-release-memory'));
       popup.append(action('打开科研笔记仓库',()=>this.openPage(),'rn-open-vault'),action('超表面仿真手册',()=>this.openManual(win),'rn-open-simulation-manual'),action('精读当前选中文献',()=>this.openSelected(win),'rn-read-selected'),action('关联报告与 Zotero 已有 PDF',()=>this.sync(win),'rn-sync-storage'));
       for(const [command,label] of [['fetch','补取全文（多来源自动回退）'],['jasminum','茉莉花：识别所选中文 PDF 附件'],['linter','Linter：规范所选题录'],['citation','Easier Citation：引用到 Word']]){
         popup.append(action(label,async()=>{const result=await ResearchNotebookIntegrations.run(this,win,command);ResearchNotebookIntegrations.lastResult=result;if(command!=='citation')Services.prompt.alert(win,'文献工具',result.message);},'rn-integration-'+command));
@@ -104,7 +108,7 @@ var ResearchNotebookPlugin={
       const openOnClick=event=>{
         if(event.button!==0||event.detail!==1||event.ctrlKey||event.metaKey||event.shiftKey||event.target.closest?.('button,input,select,[role="columnheader"],.twisty')||!event.target.closest?.('.row,[role="row"]'))return;
         const run=++clickRun;
-        Promise.resolve().then(async()=>{const selected=win.ZoteroPane?.getSelectedItems?.()||[];if(!this.active||run!==clickRun||selected.length!==1)return;const item=selected[0];if(!(item.isRegularItem?.()||(item.isAttachment?.()&&item.attachmentContentType==='application/pdf')))return;try{await this.openSelected(win);}catch(error){Zotero.logError(error);}});
+        Promise.resolve().then(async()=>{const selected=win.ZoteroPane?.getSelectedItems?.()||[];if(!this.active||run!==clickRun||selected.length!==1)return;const item=selected[0];if(!(item.isRegularItem?.()||(item.isAttachment?.()&&['application/pdf','application/epub+zip'].includes(item.attachmentContentType))))return;try{await this.openSelected(win);}catch(error){Zotero.logError(error);}});
       };
       tree.addEventListener('click',openOnClick);nodes.push(()=>tree.removeEventListener('click',openOnClick));
     }
@@ -138,6 +142,41 @@ var ResearchNotebookPlugin={
       return xhr.response;
     }catch(error){throw new Error(error.xmlhttp?.response?.error||error.message||'本地服务请求失败');}
   },
+  lowMemoryMode(){return Zotero.Prefs.get('extensions.researchnotebook.memory.enabled',true)!==false;},
+  async releaseIdleMemory(force=false){
+    if(this.memoryBusy)return {ok:true,state:'busy'};this.memoryBusy=true;
+    const rows=[],now=Math.floor(Date.now()/1000);
+    try{for(const win of Zotero.getMainWindows()){
+      const tabs=win.Zotero_Tabs;if(!tabs?.unload||!tabs?.canUnload||!Array.isArray(tabs._tabs))continue;
+      const selected=tabs.selectedID,ids=tabs._tabs.map(t=>t.id),loaded=tabs._tabs.filter(t=>t.type==='reader');
+      loaded.sort((a,b)=>Number(b.id===selected)-Number(a.id===selected)||(b.timeUnselected||now)-(a.timeUnselected||now));
+      const unloaded=[];for(const tab of loaded.slice(2)){
+        if(!this.active)break;if(!tabs.canUnload(tab.id)||!force&&now-(tab.timeUnselected||now)<180)continue;
+        tabs.unload(tab.id);unloaded.push(tab.id);
+      }
+      rows.push({loaded_before:loaded.length,loaded_after:tabs._tabs.filter(t=>t.type==='reader').length,unloaded,tab_count_preserved:JSON.stringify([...ids].sort())===JSON.stringify(tabs._tabs.map(t=>t.id).sort()),selected_preserved:tabs.selectedID===selected});
+    }
+    if(force){
+      const manager=Components.classes['@mozilla.org/memory-reporter-manager;1'].getService(Components.interfaces.nsIMemoryReporterManager);
+      Services.obs.notifyObservers(null,'child-mmu-request');
+      await new Promise(resolve=>{const timer=setTimeout(resolve,10000);manager.minimizeMemoryUsage(()=>{clearTimeout(timer);resolve();});});
+    }
+    return {ok:true,windows:rows,keep_loaded:2,idle_seconds:180};
+    }finally{this.memoryBusy=false;}
+  },
+  dockURI(dock){
+    try{const value=dock.browser?.browsingContext?.currentWindowGlobal?.documentURI;return (typeof value==='string'?value:value?.spec)||dock.browser?.currentURI?.spec||'';}catch(_){return '';}
+  },
+  loadDockPage(dock,url){dock.url=url;dock.connectionFailed=false;dock.browser.loadURI(Services.io.newURI(url),{triggeringPrincipal:Services.scriptSecurityManager.getSystemPrincipal()});},
+  async recoverDock(dock,state=null,force=false){
+    if(dock.recovering||!this.active||dock.win?.closed)return false;
+    if(!force&&!dock.connectionFailed&&!/^about:(?:neterror|certerror)/.test(this.dockURI(dock)))return false;
+    dock.recovering=true;
+    try{state=state||await this.ensureService();if(!this.active||dock.win?.closed)return false;
+      const url=`http://127.0.0.1:${state.port}/?session=${encodeURIComponent(state.key)}&host=zotero&view=dock&channel=${dock.channel}${dock.pid?'&paper='+encodeURIComponent(dock.pid):''}`;
+      this.loadDockPage(dock,url);return true;
+    }finally{dock.recovering=false;}
+  },
   activeReader(win){
     const selected=win?.Zotero_Tabs?.selectedID;
     const tabReader=selected?Zotero.Reader?.getByTabID?.(selected):null;
@@ -153,13 +192,14 @@ var ResearchNotebookPlugin={
     let last=null,busy=false,run=0;
     const tick=async()=>{
       if(!this.active||win.closed||dock.panel.style.display==='none')return;
+      if(dock.connectionFailed||/^about:(?:neterror|certerror)/.test(this.dockURI(dock))){try{await this.recoverDock(dock);}catch(_){}return;}
       const reader=this.activeReader(win),id=reader?.itemID;
       if(!id){last=null;run++;return;}
       if(id===last||busy)return;
       busy=true;const turn=++run;
       try{
         const item=await Zotero.Items.getAsync(id);
-        if(item?.attachmentContentType!=='application/pdf')return;
+        if(!['application/pdf','application/epub+zip'].includes(item?.attachmentContentType))return;
         const file=await item.getFilePathAsync();if(!file||!await IOUtils.exists(file))return;
         const record=await this.registerSelected(win,reader);
         if(turn!==run||this.activeReader(win)?.itemID!==id||dock.panel.style.display==='none')return;
@@ -181,11 +221,12 @@ var ResearchNotebookPlugin={
         if(!this.active||win.closed)throw new Error('科研笔记浮窗已关闭');
         const next=ResearchNotebookDock.create(this,win,channel);this.docks.set(win,next);
         const url=`http://127.0.0.1:${state.port}/?session=${encodeURIComponent(state.key)}&host=zotero&view=dock&channel=${channel}${pid?'&paper='+encodeURIComponent(pid):''}`;
-        next.browser.loadURI(Services.io.newURI(url),{triggeringPrincipal:Services.scriptSecurityManager.getSystemPrincipal()});this.followReader(win,next);return next;
+        this.loadDockPage(next,url);this.followReader(win,next);return next;
       })();this.docks.set(win,{creating});
       try{dock=await creating;}catch(error){this.docks.delete(win);throw error;}
     }
     dock.show();
+    await this.recoverDock(dock,state);
     if(!pid)await this.request('/api/dock/publish',{channel:dock.channel,event:{type:'home'}});
     if(pid&&(!preserveEditor||!dock.pid)){await this.request('/api/dock/publish',{channel:dock.channel,event:{type:'paper',paper_id:pid}});dock.pid=pid;}
     await this.status({loaded:true,menuWindows:this.windows.size,readerHooks:true,lastOpenedPaper:pid||'home',floating:true});return dock;
@@ -203,29 +244,29 @@ var ResearchNotebookPlugin={
     const {channel}=await this.request('/api/dock/channel',{});
     dock.channel=channel;dock.manualRequested=true;
     const url=`http://127.0.0.1:${state.port}/?session=${encodeURIComponent(state.key)}&host=zotero&view=dock&channel=${channel}&pane=manual${pid?'&paper='+encodeURIComponent(pid):''}`;
-    dock.browser.loadURI(Services.io.newURI(url),{triggeringPrincipal:Services.scriptSecurityManager.getSystemPrincipal()});
+    this.loadDockPage(dock,url);
     dock.show();return {ok:true,opened:true,entry:'simulation_manual',floating:true,version:this.version};
   },
   async selectedAttachment(win,reader){
     let item=reader?Zotero.Items.get(reader.itemID):win.ZoteroPane.getSelectedItems()[0];
     if(!item)throw new Error('请先在 Zotero 中选中一篇文献或 PDF 附件');
-    if(item.isAttachment()&&item.attachmentContentType==='application/pdf')return item;
+    if(item.isAttachment()&&['application/pdf','application/epub+zip'].includes(item.attachmentContentType))return item;
     if(item.parentItemID)item=Zotero.Items.get(item.parentItemID);
     if(!item.isRegularItem())throw new Error('请选择文献条目或 PDF 附件');
     const attachment=await item.getBestAttachment();
-    if(!attachment||attachment.attachmentContentType!=='application/pdf')throw new Error('这篇文献没有本地 PDF 附件，请先在 Zotero 中保存 PDF');
+    if(!attachment||!['application/pdf','application/epub+zip'].includes(attachment.attachmentContentType))throw new Error('这篇文献没有本地 PDF 附件，请先在 Zotero 中保存 PDF');
     return attachment;
   },
   async registerSelected(win,reader){
     let item=reader?Zotero.Items.get(reader.itemID):win.ZoteroPane.getSelectedItems()[0];
     if(!item)throw new Error('请先选择文献条目');
-    let att=item.isAttachment?.()&&item.attachmentContentType==='application/pdf'?item:null;
+    let att=item.isAttachment?.()&&['application/pdf','application/epub+zip'].includes(item.attachmentContentType)?item:null;
     const parent=item.parentItemID?await Zotero.Items.getAsync(item.parentItemID):item;
-    if(!att&&parent.isRegularItem?.()){const best=await parent.getBestAttachment();if(best?.attachmentContentType==='application/pdf')att=best;}
+    if(!att&&parent.isRegularItem?.()){const best=await ResearchNotebookReading.attachment(parent);if(best)att=best;}
     if(!att&&!parent.isRegularItem?.())throw new Error('请选择文献或 PDF');
     const path=att?await att.getFilePathAsync():'';
     const field=name=>{try{return parent.getField(name)||'';}catch(_){return '';}};
-    return this.request('/api/zotero/register',{library_id:parent.libraryID,item_key:parent.key,attachment_key:path?att.key:'',path:path||'',title:field('title'),doi:field('DOI'),year:field('date'),venue:field('publicationTitle'),url:field('url'),author:parent.getCreators().map(c=>c.lastName||c.name||'').filter(Boolean).join(', ')});
+    return this.request('/api/zotero/register',{library_id:parent.libraryID,item_key:parent.key,attachment_key:path?att.key:'',path:path||'',content_type:att?.attachmentContentType||'',document_type:parent.itemType||'',title:field('title'),doi:field('DOI'),year:field('date'),venue:field('publicationTitle'),url:field('url'),author:parent.getCreators().map(c=>c.lastName||c.name||'').filter(Boolean).join(', ')});
   },
   async openSelected(win,reader){
     const record=await this.registerSelected(win,reader);return this.openPage(record.id,reader?._window||win);
@@ -310,20 +351,30 @@ var ResearchNotebookPlugin={
     return {rating,starred:rating>0,version:Zotero.Utilities.Internal.md5(JSON.stringify([extra,tags.map(t=>[t.tag,t.type||0]).sort(),storage]))};
   },
   async nativeAction(data){
+    if(data.action==='library_navigate')return ResearchNotebookLibrary.navigate(data);
+    if(data.action==='library_search')return ResearchNotebookLibrary.search(data);
+    if(data.action==='library_get')return ResearchNotebookLibrary.get(this,data);
+    if(data.action==='library_update')return ResearchNotebookLibrary.update(data);
+    if(data.action==='library_trash')return ResearchNotebookLibrary.trash(data);
+    if(data.action==='library_collections')return ResearchNotebookLibrary.collections(data);
+    if(data.action==='get_annotations')return ResearchNotebookReading.annotations(data);
+    if(data.action==='list_readings')return ResearchNotebookReading.list(this,data);
+    if(data.action==='open_location')return ResearchNotebookReading.open(data);
+    if(data.action==='reading_attach_ocr')return ResearchNotebookReading.attachOCR(this,data);
     if(data.action==='current_reader'){
       const win=Zotero.getMainWindow(),tab=win?.Zotero_Tabs?.selectedID;
       let reader=tab?Zotero.Reader.getByTabID(tab):null;
       const active=Services.wm.getMostRecentWindow(null);
       const detached=(Zotero.Reader._readers||[]).find(r=>r._window===active&&r._window!==win);
       if(detached)reader=detached;
-      if(!reader)return {ok:true,available:false,reason:'当前 Zotero 标签不是 PDF 阅读器'};
+      if(!reader)return {ok:true,available:false,reason:'当前 Zotero 标签不是文献阅读器'};
       const attachment=await Zotero.Items.getAsync(reader.itemID);
-      if(attachment?.attachmentContentType!=='application/pdf')return {ok:true,available:false,reason:'当前阅读器不是 PDF'};
+      if(!['application/pdf','application/epub+zip'].includes(attachment?.attachmentContentType))return {ok:true,available:false,reason:'当前阅读器不是 PDF 或 EPUB'};
       const path=await attachment.getFilePathAsync();if(!path||!await IOUtils.exists(path))throw new Error('当前 Zotero PDF 附件的本地文件不可用');
       const record=await this.registerSelected(win,reader);
       const state=reader._internalReader?._state?.primaryViewState||reader._state?.primaryViewState;
       const index=state?.pageIndex??reader._internalReader?._primaryView?._pageIndex;
-      return {ok:true,available:true,paper:record,attachment_key:attachment.key,page:Number.isInteger(index)?index+1:null};
+      return {ok:true,available:true,paper:record,attachment_key:attachment.key,content_type:attachment.attachmentContentType,selection:this.readerSelections?.get(reader)||null,page:Number.isInteger(index)?index+1:null};
     }
     if(data.action==='integration_capabilities')return {ok:true,version:this.version,...ResearchNotebookIntegrations.capabilities(),menus:[...this.windows.keys()].map(win=>({fetch:!!win.document.getElementById('rn-integration-fetch'),jasminum:!!win.document.getElementById('rn-integration-jasminum'),linter:!!win.document.getElementById('rn-integration-linter'),citation:!!win.document.getElementById('rn-integration-citation')}))};
     if(data.action==='integration_last_result')return ResearchNotebookIntegrations.lastResult||{ok:true,rows:[]};
@@ -389,8 +440,28 @@ var ResearchNotebookPlugin={
       let errors=[];try{errors=(Zotero.getErrors?.(true)||[]).map(String).filter(s=>/selectionLifetime|translation\.js|notebook\.js|MutationObserver|Illegal invocation|Permission denied/i.test(s)).slice(-6).map(s=>s.replace(/(https?:\/\/[^\s?]+)\?[^\s]*/g,'$1').slice(0,450));}catch(_){}
       return {version:this.version,panels:this.selectionPanels?.size||0,events:this.translationDiagnostics||[],errors,readers:(Zotero.Reader._readers||[]).map(r=>{const i=r._internalReader,v=i?._primaryView,w=v?._iframeWindow;return {id:r.itemID,internal:!!i,view:!!v,frame:!!w,selectionRanges:v?._selectionRanges?.length??null,popup:!!i?._state?.primaryViewSelectionPopup};})};
     }
-    if(data.action==='memory_status')return {version:this.version,windows:this.windows.size,docks:[...this.docks.values()].filter(d=>d.panel).map(d=>({visible:d.panel.style.display!=='none',paper:d.pid,cleanupHandlers:d.cleanups.length})),translationJobs:[...(this.translationJobs?.values()||[])].reduce((s,j)=>({count:s.count+1,characters:s.characters+(j.text?.length||0),retainedRequests:s.retainedRequests+(j.xhr?1:0),pending:s.pending+(!j.done?1:0)}),{count:0,characters:0,retainedRequests:0,pending:0}),selectionPanels:this.selectionPanels?.size||0};
+    if(data.action==='memory_status')return {version:this.version,windows:this.windows.size,lowMemory:this.lowMemoryMode(),readerTabs:Zotero.getMainWindows().map(w=>({selected:w.Zotero_Tabs?.selectedID,tabs:(w.Zotero_Tabs?._tabs||[]).map(t=>({id:t.id,type:t.type}))})),docks:[...this.docks.values()].filter(d=>d.panel).map(d=>({visible:d.panel.style.display!=='none',paper:d.pid,cleanupHandlers:d.cleanups.length})),translationJobs:[...(this.translationJobs?.values()||[])].reduce((s,j)=>({count:s.count+1,characters:s.characters+(j.text?.length||0),retainedRequests:s.retainedRequests+(j.xhr?1:0),pending:s.pending+(!j.done?1:0)}),{count:0,characters:0,retainedRequests:0,pending:0}),selectionPanels:this.selectionPanels?.size||0};
     if(data.action==='ui_status')return this.uiStatus();
+    if(data.action==='memory_compact')return this.releaseIdleMemory(true);
+    if(data.action==='recover_ui'){
+      const win=Zotero.getMainWindow(),dock=this.docks.get(win);
+      if(dock?.panel){await this.recoverDock(dock,null,true);return {ok:true,reloaded:true};}
+      await this.openPage();return {ok:true,opened:true};
+    }
+    if(data.action==='performance_profile'){
+      const profiler=Services.profiler;if(!profiler||profiler.IsActive())return {ok:false,reason:'profiler_unavailable_or_active'};
+      try{profiler.StartProfiler(60000,5,['js'],['GeckoMain']);await Zotero.Promise.delay(3000);const profile=await profiler.getProfileDataAsync();
+        const folder=this.path('.runtime','performance');await IOUtils.makeDirectory(folder,{ignoreExisting:true});await IOUtils.writeJSON(PathUtils.join(folder,'zotero-profile.json'),profile);return {ok:true,file:'zotero-profile.json',duration_ms:3000};
+      }finally{profiler.StopProfiler();}
+    }
+    if(data.action==='performance_accessibility'){
+      const pref='accessibility.force_disabled',folder=this.path('.runtime','performance'),backup=PathUtils.join(folder,'accessibility-setting.json');
+      const previous={had_user_value:Services.prefs.prefHasUserValue(pref),value:Services.prefs.getIntPref(pref,0)};
+      if(data.disabled===true){await IOUtils.makeDirectory(folder,{ignoreExisting:true});if(!await IOUtils.exists(backup))await IOUtils.writeJSON(backup,previous);Services.prefs.setIntPref(pref,1);}
+      else if(data.disabled===false){if(!await IOUtils.exists(backup))throw new Error('没有可恢复的原无障碍设置');const original=await IOUtils.readJSON(backup);if(original.had_user_value)Services.prefs.setIntPref(pref,original.value);else Services.prefs.clearUserPref(pref);}
+      let active=null;try{active=Services.appinfo.accessibilityEnabled;}catch(_){}
+      return {ok:true,previous,value:Services.prefs.getIntPref(pref,0),active};
+    }
     if(data.action==='open_manual')return this.openManual();
     if(data.action==='get_tags'&&data.rating_batch){
       if(!Array.isArray(data.rating_batch)||data.rating_batch.length>300)throw new Error('星标查询数量无效');
@@ -402,7 +473,7 @@ var ResearchNotebookPlugin={
     let att,parent;
     if(/^[A-Z0-9]{8}$/.test(data.attachment_key||'')){
       att=await Zotero.Items.getByLibraryAndKeyAsync(data.library_id,data.attachment_key);
-      if(!att?.isAttachment()||att.attachmentContentType!=='application/pdf')throw new Error('没有找到 PDF 附件');
+      if(!att?.isAttachment()||!['application/pdf','application/epub+zip'].includes(att.attachmentContentType))throw new Error('没有找到 PDF 附件');
       parent=att.parentItemID?await Zotero.Items.getAsync(att.parentItemID):null;
     }else if(/^[A-Z0-9]{8}$/.test(data.item_key||'')){
       parent=await Zotero.Items.getByLibraryAndKeyAsync(data.library_id,data.item_key);
@@ -456,11 +527,13 @@ var ResearchNotebookPlugin={
   },
   uiStatus(){
     const inspect=node=>{if(!node)return null;const r=node.getBoundingClientRect(),s=node.ownerDocument.defaultView.getComputedStyle(node);return {width:Math.round(r.width),height:Math.round(r.height),left:Math.round(r.left),top:Math.round(r.top),display:s.display,visibility:s.visibility,hidden:node.hidden===true};};
-    return {version:this.version,windows:Zotero.getMainWindows().map(win=>{const d=win.document,dock=this.docks.get(win),browser=dock?.browser;let uri='';try{uri=browser?.browsingContext?.currentWindowGlobal?.documentURI?.spec||browser?.currentURI?.spec||'';}catch(_){}return {title:d.title,width:win.innerWidth,height:win.innerHeight,toolbar:inspect(d.getElementById('zotero-items-toolbar')),launch:inspect(d.getElementById('research-notebook-launch')),globalLaunch:inspect(d.getElementById('research-notebook-global-launch')),panel:inspect(dock?.panel),browser:inspect(browser),page:uri.split('?')[0],manualMenu:!!d.getElementById('rn-open-simulation-manual'),manualButton:!!dock?.panel?.querySelector('[aria-label="打开超表面仿真手册"]'),manualRequested:dock?.manualRequested===true,ready:browser?.contentDocument?.readyState||null};})};
+    return {version:this.version,windows:Zotero.getMainWindows().map(win=>{const d=win.document,dock=this.docks.get(win),browser=dock?.browser;let uri='';try{uri=this.dockURI(dock);}catch(_){}return {title:d.title,width:win.innerWidth,height:win.innerHeight,toolbar:inspect(d.getElementById('zotero-items-toolbar')),launch:inspect(d.getElementById('research-notebook-launch')),globalLaunch:inspect(d.getElementById('research-notebook-global-launch')),panel:inspect(dock?.panel),browser:inspect(browser),page:uri.split('?')[0],manualMenu:!!d.getElementById('rn-open-simulation-manual'),manualButton:!!dock?.panel?.querySelector('[aria-label="打开超表面仿真手册"]'),manualRequested:dock?.manualRequested===true,ready:browser?.contentDocument?.readyState||null};})};
   },
   async sync(win){const data=await this.request('/api/zotero/sync',{}),extra=data.supplements||{},local=data.local_pdfs||{},removed=(extra.local_copies_removed||0)+(local.local_copies_removed||0)+(data.local_duplicate_pdfs_removed||0),left=[...(extra.left_in_project||[]),...(local.left_in_project||[])];Services.prompt.alert(win,'科研笔记仓库',`新增关联 ${data.linked.length} 篇文献。\nPDF 入库：${(extra.imported||0)+(local.imported||0)} 份新增，${(extra.reused||0)+(local.reused||0)} 份复用。\n已清理 ${removed} 份校验相同的仓库副本；未处理 ${left.length} 份（会保留原文件）。`);},
   readerToolbar(event){const button=event.doc.createElement('button');button.textContent='科研精读';button.title='使用当前 Zotero PDF 进入科研笔记仓库';button.addEventListener('click',()=>this.openSelected(Zotero.getMainWindow(),event.reader).catch(error=>this.error(error)));const home=event.doc.createElement('button');home.textContent='仓库';home.title='直接查看笔记和报告';home.addEventListener('click',()=>this.openPage().catch(error=>this.error(error)));event.append(button);event.append(home);},
   selectionPopup(event){
+    if(!this.readerSelections)this.readerSelections=new WeakMap();
+    this.readerSelections.set(event.reader,{text:event.params?.annotation?.text?.trim()||'',page:Number.isInteger(event.params?.annotation?.position?.pageIndex)?event.params.annotation.position.pageIndex+1:null});
     if(!this.automaticTranslation()){this.selectionStates.get(event.reader)?.dispose?.();return;}
     const {doc,params,reader}=event,text=params.annotation?.text?.trim();if(!text){const state=this.selectionStates.get(reader);if(state?.selectionCancelled){state.selectionCancelled();return;}if(state?.box?.matches?.(':hover'))return;state?.dispose?.();return;}if(doc.activeElement?.closest?.('.rn-auto-translation'))return;
     const previous=this.selectionStates.get(reader),sourcePage=params.annotation?.position?.pageIndex;

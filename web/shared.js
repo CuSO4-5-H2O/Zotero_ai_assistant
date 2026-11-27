@@ -6,7 +6,7 @@ window.ResearchUI = (() => {
     try{response=await fetch(path, payload === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json','X-Notebook-Request':'1'},body:JSON.stringify(payload)});}
     catch(error){const failure=new Error('暂时无法连接本地科研笔记服务；当前修改请保留在窗口中，连接恢复后再保存');failure.isTransportError=true;throw failure;}
     const body = await response.json();
-    if (!response.ok){const error=new Error(body.error||'操作失败');error.status=response.status;throw error;}
+    if (!response.ok){const error=new Error(body.error||'操作失败');error.status=response.status;error.code=body.code;throw error;}
     return body;
   }
   function foldReportSections(root) {
@@ -21,6 +21,7 @@ window.ResearchUI = (() => {
     }
   }
   function paintMath(root) {
+    for(const link of root.querySelectorAll('a[href]'))if(/^zotero:/i.test(link.getAttribute('href')||'')){link.dataset.zoteroUri=link.getAttribute('href');link.setAttribute('href','#zotero-reference');link.removeAttribute('target');}
     foldReportSections(root);
     root.querySelectorAll('.math-inline,.math-display').forEach(el => {
       if (el.dataset.rendered) return;
@@ -30,7 +31,7 @@ window.ResearchUI = (() => {
   async function openPaperPDF(pid,page=null,target=null) {
     const id=encodeURIComponent(pid),detail=await api('/api/papers/'+id);
     if(detail.zotero?.attachment_key){
-      try{await api('/api/zotero/action',{paper_id:pid,action:'open_pdf',page});target?.close();return true;}
+      try{await api('/api/zotero/action',{paper_id:pid,action:'open_location',page});target?.close();return true;}
       catch(error){if(!detail.has_pdf)throw error;if(new URLSearchParams(location.search).get('host')==='zotero')throw error;}
     }
     if(!detail.has_pdf){target?.close();return false;}
@@ -44,6 +45,23 @@ window.ResearchUI = (() => {
     for(const root of roots)paintMath(root);
   }).observe(document.body,{childList:true,subtree:true});
   paintMath(document.body);
+  const nativeLinks=new Map();let lastNativeLink='',lastNativeTime=0;
+  async function openNativeLink(event){
+    const link=event.target.closest?.('a[data-zotero-uri],a[href^="zotero:" i]');if(!link)return;
+    event.preventDefault();event.stopPropagation();
+    if(event.type==='auxclick'&&event.button!==1||event.type==='click'&&event.button!==0)return;
+    const uri=link.dataset.zoteroUri||link.getAttribute('href');
+    if(nativeLinks.has(uri)||uri===lastNativeLink&&Date.now()-lastNativeTime<700)return;
+    const status=link.closest('#chat-workspace')?$('chat-status'):$('dock-status');
+    const show=text=>{link.title=text;if(status)status.textContent=text;else{let notice=$('zotero-link-status');if(!notice){notice=document.createElement('p');notice.id='zotero-link-status';notice.className='small';notice.setAttribute('role','status');link.after(notice);}notice.textContent=text;}};
+    lastNativeLink=uri;lastNativeTime=Date.now();link.setAttribute('aria-busy','true');
+    const request=api('/api/zotero/action',{action:'library_navigate',uri});nativeLinks.set(uri,request);
+    try{const result=await request;show((result.operation==='select'?'已定位条目':'已打开原文')+(result.title?'：'+result.title:''));}
+    catch(error){show(error.message);}
+    finally{nativeLinks.delete(uri);link.removeAttribute('aria-busy');}
+  }
+  document.addEventListener('click',openNativeLink,true);
+  document.addEventListener('auxclick',openNativeLink,true);
   document.addEventListener('click',async event => {
     const link=event.target.closest('a[data-paper]');
     if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.button!==0) return;
@@ -251,5 +269,37 @@ window.ResearchUI = (() => {
   window.addEventListener('pointerup',()=>{drag=null;if(panel.dataset.manualSize){try{localStorage.setItem('rn-translation-size',JSON.stringify({width:panel.offsetWidth,height:panel.offsetHeight}));}catch(_){}}});
   try{const size=JSON.parse(localStorage.getItem('rn-translation-size'));if(size?.width&&size?.height){panel.style.width=Math.min(size.width,innerWidth-28)+'px';panel.style.height=Math.min(size.height,innerHeight-28)+'px';panel.dataset.manualSize='1';}}catch(_){}
   async function excerptMetadata(){return (await api('/api/notes/settings')).include_source===true;}
+  // Render fenced Mermaid diagrams after asynchronous report/chat insertion.
+  let diagramLibrary,diagramRun=0,diagramTimer;
+  function loadDiagramLibrary(){
+    if(!diagramLibrary)diagramLibrary=new Promise((resolve,reject)=>{
+      const script=document.createElement('script');script.src='/vendor/mermaid.min.js';
+      script.onload=()=>{window.mermaid.initialize({startOnLoad:false,securityLevel:'strict',flowchart:{htmlLabels:false},fontFamily:'Microsoft YaHei, Arial, sans-serif'});resolve(window.mermaid);};
+      script.onerror=()=>reject(new Error('图表组件加载失败'));document.head.append(script);
+    });
+    return diagramLibrary;
+  }
+  async function paintDiagrams(){
+    const blocks=[...document.querySelectorAll('pre > code.language-mermaid')].filter(code=>!code.dataset.diagramPending);
+    if(!blocks.length)return;
+    blocks.forEach(code=>code.dataset.diagramPending='1');
+    try{
+      const library=await loadDiagramLibrary();
+      for(const code of blocks){
+        if(!code.isConnected)continue;
+        const source=code.textContent.replace(/^lowchart\b/,'flowchart');
+        const figure=document.createElement('figure');figure.className='research-diagram';
+        figure.style.cssText='margin:1em 0;overflow:auto;background:white;padding:16px;border:1px solid #dce3eb;border-radius:10px';
+        try{
+          const {svg}=await library.render('rn-diagram-'+(++diagramRun),source);
+          const view=document.createElement('div');view.innerHTML=svg;
+          const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='查看图表源码';
+          code.parentElement.replaceWith(figure);details.append(summary,code.parentElement);figure.append(view,details);
+        }catch(error){code.dataset.diagramPending='error';code.parentElement.title='图表语法错误：'+error.message;}
+      }
+    }catch(error){blocks.forEach(code=>{delete code.dataset.diagramPending;code.parentElement.title=error.message;});}
+  }
+  new MutationObserver(records=>{if(records.some(record=>record.addedNodes.length)){clearTimeout(diagramTimer);diagramTimer=setTimeout(paintDiagrams,60);}}).observe(document.body,{childList:true,subtree:true});
+  paintDiagrams();
   return {api,paintMath,openSettings,openPaperPDF,excerptMetadata,appendSelectionNote};
 })();

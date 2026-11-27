@@ -22,14 +22,18 @@ from paper_library import PaperLibrary
 from deepseek_client import DeepSeek
 from zotero_source import ZoteroStorage
 from dock_bridge import DockBridge
-from paper_chat import PaperChat
+from paper_chat import PaperChat,ChatConflict,ChatBusy
 from chatgpt_client import ChatGPT
 from ai_service import AIService
 from project_files import ProjectFiles
 from research_tools import native_action
 from literature import LiteratureService
 from favorites import Favorites
+from manual_library import ManualLibrary
 from workspace_context import WorkspaceContext
+import workspace_memory
+from reading_service import ReadingService
+from reading_notes import ReadingNotes
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent
@@ -216,8 +220,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
-        self.send_header('X-Frame-Options', 'DENY')
-        self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+        handbook_frame = urlsplit(self.path).path == '/manual'
+        self.send_header('X-Frame-Options', 'SAMEORIGIN' if handbook_frame else 'DENY')
+        ancestors = "'self'" if handbook_frame else "'none'"
+        self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors " + ancestors + "; base-uri 'none'")
         for key, value in (extra or {}).items(): self.send_header(key, value)
         self.end_headers(); self.wfile.write(data)
 
@@ -240,7 +246,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 17, 'release': (ROOT/'VERSION').read_text(encoding='utf-8').strip(),'assistant_report_reading':all(getattr(getattr(self.server,name,None),'reports',None) is not None for name in ('chat','workspace_chat'))})
+        if path.path == '/health': return self.js({'app': 'research-notebook', 'version': 17, 'release': (ROOT/'VERSION').read_text(encoding='utf-8').strip(),'book_reading':hasattr(self.server,'reading'),'annotation_export':hasattr(self.server,'reading_notes'),'simulation_manual_api':hasattr(self.server,'manual'),'assistant_report_reading':all(getattr(getattr(self.server,name,None),'reports',None) is not None for name in ('chat','workspace_chat')),'workspace_context_turns':workspace_memory.TURN_LIMIT,'workspace_memory':True,'assistant_fulltext_download':hasattr(getattr(self.server,'literature',None),'fulltext'),'assistant_workflow_guard':getattr(getattr(self.server,'workspace_chat',None),'workflow_version',0),'chat_recovery_version':getattr(self.server.workspace_chat,'recovery_version',0),'openai_transport_version':getattr(getattr(self.server.chatgpt,'network',None),'version',0)})
         if path.path == '/auth/callback':
             import html
             try:message=self.server.chatgpt.callback({k:v[0] for k,v in parse_qs(path.query).items()});status=200
@@ -257,10 +263,22 @@ class Handler(BaseHTTPRequestHandler):
                 destination='/dock?host=zotero'
                 if re.fullmatch(PAPER_ID_RE,paper):destination+='&paper='+paper
                 if re.fullmatch('[a-f0-9]{32}',channel):destination+='&channel='+channel
+                if query.get('pane')==['manual']:destination+='&pane=manual'
             elif query.get('host')==['zotero']:destination+='?host=zotero'
             return self.send_bytes(b'', 'text/plain', 303, {'Location': destination, 'Set-Cookie': 'research_notebook_'+str(self.server.server_port)+'=' + self.server.key + '; HttpOnly; SameSite=Strict; Path=/'})
         if not self.authenticated(): return self.js({'error': '请从桌面“科研笔记仓库”启动'}, 401)
         try:
+            if path.path in {'/api/manual','/api/manual/info'}:
+                return self.js(self.server.manual.info())
+            if path.path == '/api/manual/search':
+                return self.js(self.server.manual.search(parse_qs(path.query).get('q',[''])[0]))
+            manual_match=re.fullmatch(r'/api/manual/(chapters|sources|cases)/([A-Za-z0-9_-]{1,100})',path.path)
+            if manual_match:
+                kind,item_id=manual_match.groups()
+                method={'chapters':self.server.manual.chapter,'sources':self.server.manual.source,'cases':self.server.manual.case}[kind]
+                return self.js(method(item_id))
+            if path.path == '/api/manual/export':
+                return self.send_bytes(self.server.manual.export(),'application/zip',extra={'Content-Disposition':'attachment; filename="MetasurfaceSimulationManual.zip"'})
             if path.path.startswith('/api/report-assets/'):
                 name = unquote(path.path[len('/api/report-assets/'):])
                 if name not in {'文献证据矩阵.csv','检索方法与核验说明.md','超表面四方向调查报告.zip'}: raise ValueError('未知的调研附件')
@@ -294,6 +312,12 @@ class Handler(BaseHTTPRequestHandler):
             if path.path.startswith('/api/literature/tasks/'):
                 return self.js(self.server.literature.get(path.path.rsplit('/',1)[-1]))
             if path.path == '/api/papers': return self.js(list(self.server.papers.refs.values()))
+            reading_match=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/chapters',path.path)
+            if reading_match:return self.js(self.server.reading.chapters(reading_match[1]))
+            text_match=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/text',path.path)
+            if text_match:
+                q=parse_qs(path.query);return self.js(self.server.reading.text(text_match[1],int(q.get('start',['1'])[0]),int(q.get('count',['1'])[0]),int(q.get('offset',['0'])[0])))
+            if path.path.startswith('/api/reading/jobs/'):return self.js(self.server.reading.get(path.path.rsplit('/',1)[-1]))
             history_match=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/history(?:/(\d{{8}}_\d{{6}}_\d{{6}}))?',path.path)
             if history_match:
                 pid,key=history_match.groups();folder=self.server.papers.folder(pid)/'history'
@@ -307,7 +331,7 @@ class Handler(BaseHTTPRequestHandler):
                 if action == 'pdf':
                     pdf = self.server.papers.pdf(pid)
                     if not pdf: return self.js({'error':'尚未收录这篇文献的 PDF'},404)
-                    return self.send_bytes(pdf.read_bytes(),'application/pdf',extra={'Content-Disposition':'inline; filename="'+pid+'.pdf"'})
+                    return self.send_bytes(pdf.read_bytes(),'application/epub+zip' if pdf.suffix.lower()=='.epub' else 'application/pdf',extra={'Content-Disposition':'inline; filename="'+pid+pdf.suffix.lower()+'"'})
                 return self.js({**self.server.papers.get(pid),'starred':self.server.favorites.has('paper',pid)})
             if path.path == '/api/reports':
                 q=parse_qs(path.query);return self.js(self.server.reports.list(q.get('q',[''])[0],trash=q.get('trash',['0'])[0]=='1'))
@@ -336,8 +360,8 @@ class Handler(BaseHTTPRequestHandler):
                         for p in self.server.vault.root.rglob('*'):
                             if p.is_file() and p.suffix in {'.md', '.json', '.pdf'}: z.write(p, p.relative_to(self.server.vault.root))
                 return self.send_bytes(stream.getvalue(), 'application/zip', extra={'Content-Disposition': 'attachment; filename="ResearchNotebook.zip"'})
-            if path.path == '/' or re.fullmatch(rf'/paper/{PAPER_ID_RE}',path.path) or path.path in {'/dock','/dock.js','/literature-ui.js','/chat.js','/dock.css','/app.js','/paper.js','/shared.js','/ai-settings.js','/style.css','/reader.css','/favicon.svg'} or path.path.startswith('/vendor/'):
-                filename = 'index.html' if path.path == '/' else 'dock.html' if path.path == '/dock' else 'paper.html' if path.path.startswith('/paper/') else unquote(path.path).lstrip('/')
+            if path.path == '/' or re.fullmatch(rf'/paper/{PAPER_ID_RE}',path.path) or path.path in {'/manual','/manual.js','/manual.css','/dock','/dock.js','/literature-ui.js','/chat.js','/dock.css','/app.js','/paper.js','/shared.js','/ai-settings.js','/style.css','/reader.css','/favicon.svg'} or path.path.startswith('/vendor/'):
+                filename = 'index.html' if path.path == '/' else 'dock.html' if path.path == '/dock' else 'manual.html' if path.path == '/manual' else 'paper.html' if path.path.startswith('/paper/') else unquote(path.path).lstrip('/')
                 file = (ROOT / 'web' / filename).resolve()
                 if not file.is_relative_to((ROOT/'web').resolve()): raise ValueError('无效资源路径')
                 mime = mimetypes.guess_type(str(file))[0] or 'application/octet-stream'
@@ -354,6 +378,14 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length', '0'))
             if length <= 0 or length > 44_000_000: raise ValueError('请求内容过大或为空')
             payload = json.loads(self.rfile.read(length))
+            if self.path == '/api/manual/open-source':
+                pdf_request=self.server.manual.pdf_request(payload.get('id'),payload.get('page'))
+                # Existing native bridge, with an isolated lookup facade. It
+                # neither registers/rewrites a paper nor touches personal notes.
+                class ManualPaper:
+                    def item(self,unused):return {'zotero':pdf_request}
+                result=native_action(ROOT,ManualPaper(),pdf_request)
+                return self.js({**result,'opened':bool(result.get('ok')),'source_id':payload.get('id')})
             if self.path == '/api/favorites':
                 kind=payload.get('kind');item_id=payload.get('id')
                 if kind=='paper':self.server.papers.item(item_id)
@@ -381,7 +413,14 @@ class Handler(BaseHTTPRequestHandler):
                     result['paper']={'id':ref['id'],'title':ref['title'],'zotero':ref.get('zotero')}
                 return self.js(result)
             if self.path == '/api/zotero/action':
-                if payload.get('action') in {'get_tags','add_paper_tags','remove_paper_tags'}:return self.js(native_action(ROOT,self.server.papers,payload))
+                if payload.get('action')=='library_navigate':return self.js(native_action(ROOT,self.server.papers,payload))
+                if payload.get('action')=='open_location' and payload.get('page') is not None:
+                    ref=self.server.papers.item(payload.get('paper_id'))
+                    if ref.get('zotero',{}).get('content_type')=='application/epub+zip':
+                        page=payload['page'];doc=self.server.papers.pages(ref['id'])
+                        if type(page)!=int or not 1<=page<=len(doc['pages']):raise ValueError('电子书章节编号无效')
+                        payload={**payload,**doc['pages'][page-1].get('location',{})};payload.pop('page',None)
+                if payload.get('action') in {'get_tags','add_paper_tags','remove_paper_tags','get_annotations','open_location','list_readings'}:return self.js(native_action(ROOT,self.server.papers,payload))
                 pid=str(payload.get('paper_id',''));paper=self.server.papers.item(pid)
                 if not paper.get('zotero'):raise ValueError('该文献尚未关联 Zotero PDF')
                 action=payload.get('action')
@@ -427,7 +466,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/literature/settings':
                 result=self.server.literature.settings.save(payload);self.server.literature.cache.clear();return self.js(result)
             if self.path == '/api/literature/identifiers':return self.js(self.server.literature.search_identifiers(payload.get('text')))
-            if self.path == '/api/literature/import':return self.js(self.server.literature.start(payload.get('candidate_ids'),payload.get('fetch_pdf',True),payload.get('collection_name'),payload.get('attachment_mode','default'),payload.get('target_subdir')),202)
+            if self.path == '/api/literature/fulltext':return self.js(self.server.literature.fulltext(payload.get('dois'),payload.get('item_keys'),payload.get('pdf_urls_by_doi')),202)
+            if self.path == '/api/literature/import':return self.js(self.server.literature.start(payload.get('candidate_ids'),payload.get('fetch_pdf',True),payload.get('collection_name'),payload.get('attachment_mode','default'),payload.get('target_subdir'),payload.get('pdf_urls_by_candidate')),202)
+            if self.path == '/api/literature/design-note':return self.js(native_action(ROOT,self.server.papers,{'action':'literature_design_note',**{k:payload[k] for k in ('item_key','content','version') if k in payload}}))
             cancel_literature=re.fullmatch('/api/literature/tasks/([a-f0-9]{32})/stop',self.path)
             if cancel_literature:return self.js(self.server.literature.cancel(cancel_literature[1]))
             if self.path == '/api/projects/import':return self.js(self.server.projects.bind().import_file(payload.get('path'),payload.get('data')))
@@ -469,10 +510,15 @@ class Handler(BaseHTTPRequestHandler):
                     for event in stream:self.wfile.write((json.dumps(event,ensure_ascii=False)+'\n').encode());self.wfile.flush()
                 except (BrokenPipeError,ConnectionResetError):pass
                 except (ValueError,OSError) as error:
-                    try:self.wfile.write((json.dumps({'type':'error','error':str(error)},ensure_ascii=False)+'\n').encode());self.wfile.flush()
+                    try:self.wfile.write((json.dumps({'type':'error','error':str(error),'code':getattr(error,'code',None)},ensure_ascii=False)+'\n').encode());self.wfile.flush()
                     except OSError:pass
                 finally:stream.close()
                 return
+            reading_job=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/reading-job',self.path)
+            if reading_job:return self.js(self.server.reading.start(reading_job[1],payload.get('kind'),self.server.ai.bind() if payload.get('kind')=='chapters' else None),202)
+            if self.path=='/api/reading/cancel':return self.js(self.server.reading.cancel(payload.get('task_id')))
+            if self.path=='/api/reading/export-annotations':return self.js(self.server.reading_notes.export(payload.get('paper_ids'),payload.get('versions')))
+            if self.path=='/api/reading/combine-notes':return self.js(self.server.reading_notes.combine(payload.get('note_ids'),payload.get('title'),payload.get('versions'),payload.get('content')))
             paper_match = re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/(upload|reading|analyze)',self.path)
             if paper_match:
                 pid, action = paper_match.groups()
@@ -495,6 +541,9 @@ class Handler(BaseHTTPRequestHandler):
                 with self.server.reports.lock:
                     mapping.update({Path(n.get('source') or n['file']).name:'report:'+n['id'] for n in self.server.reports.read_index()['notes'] if not n.get('trashed')})
                 return self.js({'html': render_markdown(content, mapping)})
+            if self.path == '/api/reports':
+                created = self.server.reports.create(payload['title'], payload.get('folder', '调研报告'), payload.get('tags', []), payload['content'])
+                return self.js(created, 201)
             report_edit=re.fullmatch(r'/api/reports/([a-f0-9]{32})',self.path)
             if report_edit:return self.js(self.server.reports.save(report_edit[1],payload))
             guide_edit=re.fullmatch(rf'/api/papers/({PAPER_ID_RE})/guide',self.path)
@@ -504,6 +553,7 @@ class Handler(BaseHTTPRequestHandler):
             if not match: return self.js({'error': '操作不存在'}, 404)
             nid, action = match.groups()
             return self.js(self.server.vault.trash(nid, action == 'restore') if action else self.server.vault.save(nid, payload))
+        except (ChatConflict,ChatBusy) as e:self.js({'error':str(e),'code':e.code,'current_version':getattr(e,'current_version',None)},409)
         except Conflict as e: self.js({'error': str(e)}, 409)
         except (StopIteration, FileNotFoundError): self.js({'error': '笔记不存在'}, 404)
         except (ValueError, KeyError, TypeError) as e: self.js({'error': str(e)}, 400)
@@ -522,6 +572,7 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', previous.get('port',0)), Handler)
     server.daemon_threads = True
     server.vault = Vault(args.vault,seed=False)
+    server.manual = ManualLibrary(ROOT/'manuals/metasurface',render_markdown)
     server.reports = Vault(args.vault.parent/'reports',seed=False);server.reports.category='reports'
     server.favorites=Favorites(args.vault/'.stars.json',atomic)
     server.vault.favorites=server.reports.favorites=server.favorites
@@ -538,6 +589,9 @@ def main():
     server.chat = PaperChat(server.papers,atomic,render_markdown,server.vault,server.projects,lambda payload:native_action(ROOT,server.papers,payload))
     server.workspace_chat = PaperChat(WorkspaceContext(server.papers),atomic,render_markdown,server.vault,server.projects,lambda payload:native_action(ROOT,server.papers,payload))
     server.zotero = ZoteroStorage(server.papers,args.zotero_storage)
+    reader_native=lambda payload:native_action(ROOT,server.papers,payload)
+    server.reading=ReadingService(ROOT,server.papers,atomic,reader_native,lambda pid,payload:server.zotero.register(payload))
+    server.reading_notes=ReadingNotes(server.papers,server.vault,reader_native)
     server.literature=LiteratureService(args.config/'literature',atomic,lambda payload:native_action(ROOT,server.papers,payload),server.zotero.register_parent)
     server.chat.literature=server.workspace_chat.literature=server.literature
     server.chat.reports=server.workspace_chat.reports=server.reports

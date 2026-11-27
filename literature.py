@@ -124,6 +124,41 @@ class LiteratureService:
             for row in rows:self.candidates[row['candidate_id']]=row
             self.atomic(self.root/'candidates.json',json.dumps(self.candidates,ensure_ascii=False))
         return {'ok':True,'results':rows,'source':'DOI 核验','warnings':warnings,'destination':'storage'}
+    def fulltext(self,dois=None,item_keys=None,pdf_urls_by_doi=None):
+        dois=[] if dois is None else dois;item_keys=[] if item_keys is None else item_keys
+        if not isinstance(dois,list) or not isinstance(item_keys,list) or not 1<=len(dois)+len(item_keys)<=20:raise ValueError('请提供1—20个 DOI 或已有 Zotero 条目编号')
+        normalized=[]
+        for value in dois:
+            if not isinstance(value,str):raise ValueError('DOI 应为字符串')
+            value=re.sub(r'^https?://(?:dx\.)?doi\.org/','',value.strip(),flags=re.I).lower()
+            if not re.fullmatch(r'10\.\d{4,9}/[^\s<>]+',value):raise ValueError('DOI 格式无效')
+            if value not in normalized:normalized.append(value)
+        if any(not isinstance(key,str) or not re.fullmatch('[A-Z0-9]{8}',key) for key in item_keys):raise ValueError('Zotero 条目编号无效')
+        rows=[];warnings=[];known=set()
+        def add_existing(key):
+            record=self.native({'action':'library_get','item_key':key})
+            if not record.get('ok') or record.get('deleted'):raise ValueError('无法读取目标 Zotero 文献：'+key)
+            m=record['metadata'];doi=str(m.get('DOI','')).strip().lower();cid=hashlib.sha256(('zotero:'+str(record['library_id'])+':'+key).encode()).hexdigest()[:24]
+            rows.append({'candidate_id':cid,'title':m['title'],'doi':doi,'item_key':key,'url':m.get('url',''),'authors':[],'year':str(m.get('date',''))[:4],'venue':m.get('publicationTitle') or m.get('proceedingsTitle',''),'pdf_urls':[],'source':'Zotero已有题录'})
+            if doi:known.add(doi)
+        for key in dict.fromkeys(item_keys):add_existing(key)
+        remaining=[doi for doi in normalized if doi not in known]
+        for doi in remaining:
+            result=self.native({'action':'library_search','query':doi,'limit':30})
+            found=[r for r in result.get('items',[]) if str(r.get('metadata',{}).get('DOI','')).strip().lower()==doi]
+            if found:
+                found.sort(key=lambda r:not r.get('has_local_pdf',False));add_existing(found[0]['item_key'])
+        remaining=[doi for doi in remaining if doi not in known]
+        if remaining:
+            verified=self.search_identifiers('\n'.join(remaining));warnings.extend(verified.get('warnings',[]));rows.extend(verified['results'])
+        if not rows:raise ValueError('没有可提交的文献：'+'；'.join(warnings))
+        with self.lock:
+            for row in rows:self.candidates[row['candidate_id']]=row
+            self.atomic(self.root/'candidates.json',json.dumps(self.candidates,ensure_ascii=False))
+        links=pdf_urls_by_doi or {}
+        if not isinstance(links,dict) or set(links)-(set(normalized)|known):raise ValueError('PDF 地址必须对应本次请求的文献 DOI')
+        job=self.start([r['candidate_id'] for r in rows],fetch_pdf=True,collection_name='storage',attachment_mode='default',pdf_urls_by_candidate={r['candidate_id']:links[r['doi']] for r in rows if r['doi'] in links})
+        return {**job,'warnings':warnings,'requested':len(normalized)+len(set(item_keys))}
     def save(self,job):
         self.atomic(self.root/'jobs'/(job['id']+'.json'),json.dumps(job,ensure_ascii=False))
     def get(self,job_id):
@@ -136,7 +171,7 @@ class LiteratureService:
                 if data['status'] in {'queued','running','cancelling'}:data['status']='interrupted';data['message']='服务重启导致任务中断；已保存的条目保留，可重新导入去重。'
                 self.jobs[job_id]=data
             return json.loads(json.dumps(self.jobs[job_id]))
-    def start(self,candidate_ids,fetch_pdf=True,collection_name=None,attachment_mode='default',target_subdir=None):
+    def start(self,candidate_ids,fetch_pdf=True,collection_name=None,attachment_mode='default',target_subdir=None,pdf_urls_by_candidate=None):
         if collection_name is not None and (not isinstance(collection_name,str) or not 1<=len(collection_name.strip())<=120 or any(ord(c)<32 for c in collection_name)):raise ValueError('集合名称无效')
         collection_name=collection_name.strip() if collection_name else None
         if not isinstance(attachment_mode,str) or attachment_mode not in {'default','linked_codex'}:raise ValueError('附件模式无效')
@@ -147,15 +182,23 @@ class LiteratureService:
             if attachment_mode!='linked_codex':raise ValueError('目标子目录仅用于 linked_codex 附件模式')
         if not isinstance(candidate_ids,list) or not 1<=len(candidate_ids)<=20 or any(not isinstance(i,str) for i in candidate_ids) or type(fetch_pdf)!=bool:raise ValueError('请选择1—20篇检索结果')
         ids=list(dict.fromkeys(candidate_ids))
+        supplied=pdf_urls_by_candidate or {}
+        if not isinstance(supplied,dict) or set(supplied)-set(ids):raise ValueError('PDF 链接必须对应本批候选编号')
+        checked={}
+        for cid,urls in supplied.items():
+            if not isinstance(urls,list) or len(urls)>6 or any(not isinstance(url,str) for url in urls):raise ValueError('每篇最多提供6个PDF直链')
+            checked[cid]=list(dict.fromkeys(public_url(url) for url in urls))
         with self.lock:
             if any(i not in self.candidates for i in ids):raise ValueError('候选已过期或未经检索核验，请重新搜索；禁止凭空生成 DOI 入库')
             for job in self.jobs.values():
-                if job['status'] in {'queued','running','cancelling'} and job['candidate_ids']==ids and job['fetch_pdf']==fetch_pdf and job.get('collection_name')==collection_name and job.get('attachment_mode','default')==attachment_mode and job.get('target_subdir')==target_subdir:return self.get(job['id'])
+                if job['status'] in {'queued','running','cancelling'} and job['candidate_ids']==ids and job['fetch_pdf']==fetch_pdf and job.get('collection_name')==collection_name and job.get('attachment_mode','default')==attachment_mode and job.get('target_subdir')==target_subdir and job.get('pdf_urls_by_candidate',{})==checked:return self.get(job['id'])
             if len(self.busy)>=3:raise ValueError('已有3个入库任务，请等待或停止后续导入')
             job={'id':uuid.uuid4().hex,'candidate_ids':ids,'fetch_pdf':fetch_pdf,'status':'queued','created':time.time(),'total':len(ids),'processed':0,'rows':[],'cancel_requested':False,'metadata_saved':0,'pdf_available':0,'pdf_downloaded':0,'message':'等待导入；PDF 将由 Zotero 写入 storage'}
             job.update(collection_name=collection_name,attachment_mode=attachment_mode,target_subdir=target_subdir)
             self.jobs[job['id']]=job;self.busy.add(job['id']);self.save(job)
-            self.pool.submit(self.run,job['id'],[dict(self.candidates[i]) for i in ids]);return self.get(job['id'])
+            job['pdf_urls_by_candidate']=checked;self.save(job)
+            candidates=[{**self.candidates[i],'pdf_urls':list(dict.fromkeys(checked.get(i,[])+self.candidates[i].get('pdf_urls',[])))} for i in ids]
+            self.pool.submit(self.run,job['id'],candidates);return self.get(job['id'])
     def cancel(self,job_id):
         with self.lock:
             job=self.get(job_id)
@@ -180,7 +223,7 @@ class LiteratureService:
                     outcome=self.native({'action':'literature_import','metadata':metadata,'fetch_pdf':job['fetch_pdf'],'collection_name':job.get('collection_name'),'attachment_mode':job.get('attachment_mode','default'),'target_subdir':job.get('target_subdir')})
                     if not outcome.get('ok'):raise ValueError(outcome.get('error','Zotero 导入失败'))
                     record=self.register(outcome['metadata'])
-                    row.update(ok=True,paper_id=record['id'],item_key=outcome['metadata']['item_key'],created=outcome['created'],pdf_status=outcome['pdf_status'],message=outcome.get('message',''),path=outcome['metadata'].get('path',''),location_exception=outcome.get('location_exception',False),sha256=outcome.get('sha256',''))
+                    row.update(ok=True,paper_id=record['id'],item_key=outcome['metadata']['item_key'],created=outcome['created'],pdf_status=outcome['pdf_status'],message=outcome.get('message',''),path=outcome['metadata'].get('path',''),location_exception=outcome.get('location_exception',False),sha256=outcome.get('sha256',''),acquisition_attempts=outcome.get('acquisition_attempts',[]))
                 except Exception as e:row.update(ok=False,error=str(e)[:350])
                 with self.lock:
                     job['rows'].append(row);job['processed']=len(job['rows']);job['metadata_saved']=sum(bool(r.get('ok')) for r in job['rows']);job['pdf_available']=sum(r.get('pdf_status') in {'existing','downloaded','copied','linked'} for r in job['rows']);job['pdf_downloaded']=sum(r.get('pdf_status') in {'downloaded','copied','linked'} for r in job['rows']);self.save(job)

@@ -1,5 +1,5 @@
 """Bounded public web search/read tools. Never send local credentials."""
-import html,ipaddress,json,re,socket,time,xml.etree.ElementTree as ET
+import html,ipaddress,json,re,socket,time,io,xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from urllib import request,parse
 _PUBLIC_DNS={}
@@ -45,6 +45,11 @@ def fetch(url,limit=2_000_000):
             data=response.read(limit+1)
             if len(data)>limit:raise ValueError('网页超过读取大小限制')
             content_type=response.headers.get_content_type()
+            if content_type=='application/pdf' or data.startswith(b'%PDF-'):
+                from pypdf import PdfReader
+                reader=PdfReader(io.BytesIO(data))
+                pages=['[PDF 第 '+str(i+1)+' 页]\n'+(page.extract_text() or '') for i,page in enumerate(reader.pages)]
+                return '\n\n'.join(pages),response.url
             if content_type not in {'text/html','application/xhtml+xml','text/plain','application/rss+xml','application/xml','text/xml'}:raise ValueError('当前工具仅读取网页文字，未读取此文件正文')
             return data.decode(response.headers.get_content_charset() or 'utf-8',errors='replace'),response.url
     except (OSError,ET.ParseError):raise ValueError('网站暂时无法读取，可尝试搜索结果中的其他来源') from None
@@ -72,6 +77,9 @@ def web_search(query):
     return {'ok':True,'query':query,'source':'Bing RSS','results':rows,'scope':'搜索摘要；需 read_web_page 核实正文'}
 
 def read_web_page(url):
-    raw,final=fetch(url);parser=Text();parser.feed(raw)
+    raw,final=fetch(url,limit=12_000_000)
+    if raw.startswith('[PDF 第 '):
+        return {'ok':True,'url':final,'text':raw[:60000],'truncated':len(raw)>60000,'scope':'PDF 数据手册正文，含页码；当前返回前 60000 字符'}
+    parser=Text();parser.feed(raw)
     text=re.sub(r'[ \t]+',' ',''.join(parser.parts));text=re.sub(r'\n\s*\n+','\n\n',text).strip()
     return {'ok':True,'url':final,'text':text[:22000],'truncated':len(text)>22000,'scope':'网页可提取文字，不含图片或受登录保护的正文'}

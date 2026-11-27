@@ -26,7 +26,7 @@ var ResearchNotebookTranslation={
     };
     const check=()=>{if(!closed&&!protectedNow()&&(sourceCancelled||sourceSelected()===false))close();};
     // PDF selection ranges are updated by Zotero after capture-phase handlers.
-    const scheduleCheck=()=>{check();for(const delay of [0,80]){const timer=event.doc.defaultView.setTimeout(()=>{timers.delete(timer);check();},delay);timers.add(timer);}};
+    const scheduleCheck=()=>{if(closed)return;check();if(closed||timers.size)return;for(const delay of [0,80]){const timer=event.doc.defaultView.setTimeout(()=>{timers.delete(timer);check();},delay);timers.add(timer);}};
     on(box,'pointerenter',()=>{hovering=true;focusProtected=true;});
     on(box,'pointerleave',()=>{hovering=false;focusProtected=false;scheduleCheck();});
     on(box,'focusout',()=>{scheduleCheck();});

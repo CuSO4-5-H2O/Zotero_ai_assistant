@@ -9,6 +9,8 @@ async function startup(data, reason) {
   Services.scriptloader.loadSubScript(data.rootURI+'integrations.js',this);
   Services.scriptloader.loadSubScript(data.rootURI+'pdf-sources.js',this);
   Services.scriptloader.loadSubScript(data.rootURI+'literature.js',this);
+  Services.scriptloader.loadSubScript(data.rootURI+'reading.js',this);
+  Services.scriptloader.loadSubScript(data.rootURI+'library.js',this);
   Services.scriptloader.loadSubScript(data.rootURI+'notebook.js',this);
   NotebookPlugin=ResearchNotebookPlugin;
   await NotebookPlugin.start(data);

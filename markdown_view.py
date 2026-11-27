@@ -58,7 +58,11 @@ def render_markdown(text, mapping=None):
                 local_paper = re.fullmatch(r'/paper/([A-D]\d{1,2}|Z\d+_[A-Z0-9]{8})',parsed.path)
                 if local_paper and local_paper[1] in CATALOG and not parsed.scheme:
                     pid=local_paper[1]
-                if pid:
+                if parsed.scheme=='zotero':
+                    # Native protocols must not navigate the embedded Gecko browser.
+                    child.attrSet('href','#zotero-reference')
+                    child.attrSet('data-zotero-uri',href)
+                elif pid:
                     child.attrSet('href', '/paper/' + pid)
                     child.attrSet('data-paper', pid)
                     child.attrSet('title', '在独立窗口精读 ' + pid)

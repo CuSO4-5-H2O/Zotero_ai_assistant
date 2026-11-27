@@ -9,7 +9,7 @@ def literal_note_content(question):
     if not match or re.search(r'然后|同时|再(?:新建|创建|添加)|并(?:添加|创建|删除)',match[1]):return None
     return match[1]
 TOOLS=[
-    tool('search_notes','按关键词搜索仓库笔记或回收站。唯一匹配的短笔记会直接返回note正文和version，相当于已读取，可直接修改或删除。否则需read_note。',{'query':S,'trash':{'type':'boolean'}},['query']),
+    tool('search_notes','按关键词搜索全部仓库/文献笔记或回收站；空query列出，start分页。唯一匹配的短笔记直接返回正文和版本。',{'query':S,'trash':{'type':'boolean'},'start':{'type':'integer','minimum':0}},['query']),
     tool('read_note','读取笔记正文、版本和状态。仓库笔记用UUID；当前论文精读用 current_paper。',{'note_id':S},['note_id']),
     tool('create_note','按用户要求新建仓库笔记。正文使用Markdown。',{'title':S,'content':S,'folder':S,'tags':{'type':'array','items':S}},['title','content']),
     tool('update_note','编辑已读取的笔记。提供读取结果的version；只传要修改的字段，省略content时保留原正文。',{'note_id':S,'version':S,'content':S,'title':S,'folder':S,'tags':{'type':'array','items':S}},['note_id','version']),
@@ -66,7 +66,7 @@ class NoteTools:
             literal=literal_note_content(self.question)
             if literal is not None:args={**args,'content':literal,'title':literal.splitlines()[0][:60] or args['title']}
         normalized={**args}
-        if name=='create_note':normalized={**args,'folder':args.get('folder','文献笔记'),'tags':args.get('tags',[self.pid])}
+        if name=='create_note':normalized={**args,'folder':args.get('folder','文献笔记'),'tags':args.get('tags',[] if self.pid=='workspace' else [self.pid])}
         signature=json.dumps([name,normalized],ensure_ascii=False,sort_keys=True)
         if name not in {'search_notes','read_note'} and signature in self.dedup:return self.dedup[signature]
         execution_key=hashlib.sha256((str(self.request_version)+'\0'+self.question+'\0'+signature).encode()).hexdigest()
@@ -79,14 +79,16 @@ class NoteTools:
                 query=args.get('query','');trash=args.get('trash',False)
                 if not isinstance(query,str) or len(query)>300 or type(trash)!=bool:raise ValueError('检索参数无效')
                 rows=self.vault.list(query,trash=trash)['notes']
-                result={'ok':True,'notes':[{k:r[k] for k in ['id','title','folder','tags','excerpt']} for r in rows[:30]],'total':len(rows),'current_paper_note_id':'current_paper'}
+                start=args.get('start',0)
+                if type(start)!=int or start<0:raise ValueError('笔记检索分页参数无效')
+                result={'ok':True,'notes':[{k:r[k] for k in ['id','title','folder','tags','excerpt']} for r in rows],'total':len(rows),'current_paper_note_id':'current_paper'}
                 for pid,ref in getattr(self.papers,'refs',{}).items():
                     reading=self.papers.reading(pid);deleted=self.marker(pid).exists() and not reading['content']
                     if deleted!=trash or not (reading['content'] or deleted):continue
                     if query.casefold() not in (pid+' '+ref['title']+' '+reading['content']).casefold():continue
                     result['notes'].append({'id':'paper:'+pid,'title':ref['title'],'folder':'本文献笔记','tags':[pid],'excerpt':reading['content'][:180]})
-                result['total']=len(result['notes']);result['notes']=result['notes'][:30]
-                if result['total']==1:result['note']=self.read(result['notes'][0]['id'])
+                result['total']=len(result['notes']);result['notes']=result['notes'][start:start+30];result['next_start']=start+30 if start+30<result['total'] else None
+                if result['total']==1 and result['notes']:result['note']=self.read(result['notes'][0]['id'])
                 return result
             if name=='read_note':return {'ok':True,'note':self.read(args['note_id'])}
             if self.writes>=8:raise ValueError('本轮最多写入8次，请分批处理笔记')
@@ -98,7 +100,7 @@ class NoteTools:
                     if key in args and (not isinstance(args[key],str) or not args[key].strip()):raise ValueError('标题和分类必须为非空文字')
                 if 'tags' in args and (not isinstance(args['tags'],list) or len(args['tags'])>30 or any(not isinstance(v,str) for v in args['tags'])):raise ValueError('标签应为最多30项文字列表')
             if name=='create_note':
-                result=self.vault.create(args['title'],args.get('folder','文献笔记'),args.get('tags',[self.pid]),args['content'])
+                result=self.vault.create(args['title'],args.get('folder','文献笔记'),args.get('tags',[] if self.pid=='workspace' else [self.pid]),args['content'])
             elif nid.startswith('paper:'):
                 with self.papers.lock:
                     pid=nid[6:];current=self.papers.reading(pid)

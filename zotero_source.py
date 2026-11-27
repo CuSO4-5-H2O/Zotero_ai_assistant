@@ -44,12 +44,13 @@ class ZoteroStorage:
         codex=(self.storage/'codex').resolve()
         linked_codex=file.parent==codex and (codex.parent.parent/'zotero.sqlite').is_file()
         if not linked_codex and (storage.name.casefold()!='storage' or file.parent.name!=attachment_key
-                or file.suffix.lower()!='.pdf' or not (data_dir/'zotero.sqlite').is_file()):
+                or file.suffix.lower() not in {'.pdf','.epub'} or not (data_dir/'zotero.sqlite').is_file()):
             raise ValueError('PDF 必须是当前 Zotero 数据目录 storage 中对应 key 的托管附件')
-        if file.suffix.lower()!='.pdf':raise ValueError('附件必须是 PDF')
+        if file.suffix.lower() not in {'.pdf','.epub'}:raise ValueError('附件必须是 PDF 或 EPUB')
         if not file.is_file():raise ValueError('Zotero PDF 附件未下载或已移动，请先在 Zotero 中打开附件')
         with file.open('rb') as stream:
-            if stream.read(5)!=b'%PDF-':raise ValueError('附件不是有效 PDF')
+            magic=stream.read(5)
+            if (file.suffix.lower()=='.pdf' and magic!=b'%PDF-') or (file.suffix.lower()=='.epub' and not magic.startswith(b'PK')):raise ValueError('附件格式与扩展名不匹配')
         # Zotero's active data directory can be changed by the user. Trust the
         # path returned by Zotero's native attachment API, not an old E: drive
         # default, and use that active storage directory for subsequent checks.
@@ -113,7 +114,10 @@ class ZoteroStorage:
                 ref={'id':pid,'topic':0,'title':title,'author':str(payload.get('author','Zotero 文献'))[:1000],'year':str(payload.get('year',''))[:40],'venue':str(payload.get('venue',''))[:300],'url':('https://doi.org/'+record_doi if record_doi else str(payload.get('url',''))[:2000]),'type':'待核读','relation':'Zotero 文献','innovation':'尚未撰写；请依据论文全文记录关键创新。','boundary':'导入附件不代表已完成全文精读。','access':'直接读取 Zotero storage 的本地 PDF'}
                 self.papers.refs[pid]=ref
             pid=ref['id']
-            ref['zotero']={'library_id':library,'item_key':parent,'attachment_key':att,'path':str(file)}
+            source_key=payload.get('source_attachment_key') or ref.get('zotero',{}).get('source_attachment_key')
+            ref['zotero']={'library_id':library,'item_key':parent,'attachment_key':att,'path':str(file),'content_type':'application/epub+zip' if file.suffix.lower()=='.epub' else 'application/pdf'}
+            if source_key and re.fullmatch('[A-Z0-9]{8}',source_key):ref['zotero']['source_attachment_key']=source_key
+            ref['document_type']=payload.get('document_type') or ref.get('document_type','')
             self.papers.atomic(self.papers.root/'catalog.json',json.dumps(list(self.papers.refs.values()),ensure_ascii=False,indent=2))
             self.papers.atomic(self.papers.folder(pid)/'zotero.json',json.dumps(ref['zotero'],ensure_ascii=False,indent=2))
             return {'id':pid,'title':ref['title'],'attachment_key':att,'pdf_source':'Zotero storage'}

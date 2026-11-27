@@ -1,22 +1,32 @@
 """Official Sign in with ChatGPT; app-owned DPAPI credentials and Responses SSE."""
 import base64, contextlib, hashlib, json, msvcrt, secrets, threading, time, uuid
+import socket, ssl
 from pathlib import Path
 from urllib import request, parse, error
 from deepseek_client import protect
+from openai_transport import OpenAITransport
 
 ISSUER='https://auth.openai.com'
 TOKEN=ISSUER+'/api/accounts/oauth/token'
 RESOURCE='https://api.openai.com/v1'
 SCOPE='openid profile email offline_access resource.invoke chatgpt.tokens.use.direct'
 
-def json_request(url,body=None,token=None,form=False):
+def connection_error(exc,stage):
+    reason=getattr(exc,'reason',exc)
+    if isinstance(reason,(TimeoutError,socket.timeout)):
+        return ValueError(stage+'超时；可重新发送，已执行操作请先查看任务记录。')
+    if isinstance(reason,ssl.SSLError):
+        return ValueError(stage+'失败：TLS 连接中断，请检查代理连接后重试。')
+    return ValueError(stage+'失败：'+str(reason)[:180])
+
+def json_request(url,body=None,token=None,form=False,opener=None):
     headers={'Accept':'application/json'}
     if token:headers['Authorization']='Bearer '+token
     if body is not None:
         headers['Content-Type']='application/x-www-form-urlencoded' if form else 'application/json'
         body=(parse.urlencode(body) if form else json.dumps(body)).encode()
     try:
-        with request.urlopen(request.Request(url,data=body,headers=headers),timeout=25) as response:
+        with (opener or request.urlopen)(request.Request(url,data=body,headers=headers),timeout=25) as response:
             return json.loads(response.read(4_000_000) or b'{}')
     except error.HTTPError as e:
         try:
@@ -24,7 +34,7 @@ def json_request(url,body=None,token=None,form=False):
             if isinstance(code,dict):code=code.get('code') or code.get('type')
         except (ValueError,AttributeError):code=None
         raise ProviderError(code or 'http_'+str(e.code)) from None
-    except (TimeoutError,error.URLError):raise ValueError('连接 OpenAI 超时，请检查网络后重试') from None
+    except (TimeoutError,error.URLError) as exc:raise connection_error(exc,'读取 OpenAI 登录或模型信息') from None
 
 class ProviderError(ValueError):
     def __init__(self,code):
@@ -40,15 +50,16 @@ class ProviderError(ValueError):
 
 class ChatGPT:
     def __init__(self,path,atomic):
-        self.path=Path(path);self.atomic=atomic;self.lock=threading.RLock();self.pending=None;self.notice='';self.catalog={}
+        self.path=Path(path);self.atomic=atomic;self.lock=threading.RLock();self.notice='';self.catalog={}
         self.jwks=None;self.gate=threading.BoundedSemaphore(2)
+        self.network=OpenAITransport(self.path.parent/'openai-network.json')
     @contextlib.contextmanager
     def transaction(self):
         # Serialize rotating refresh tokens across notebook processes.
         with self.lock:
             self.path.parent.mkdir(parents=True,exist_ok=True)
             with self.path.with_suffix('.lock').open('a+b') as f:
-                f.seek(0);f.write(b'0');f.flush();f.seek(0)
+                f.seek(0)
                 try:msvcrt.locking(f.fileno(),msvcrt.LK_LOCK,1)
                 except OSError:raise ValueError('ChatGPT 会话正在更新，请稍后重试') from None
                 try:yield
@@ -63,16 +74,24 @@ class ChatGPT:
             for cid,a in data['accounts'].items():
                 accounts.append({'id':cid,'label':a.get('email') or a.get('name') or 'ChatGPT 账号','suffix':cid[-6:],
                   'connected':bool(a.get('access_token')),'sharing':'chatgpt.tokens.use.direct' in a.get('scopes',[]) and bool(a.get('access_token'))})
-            if self.pending and self.pending['expires']<time.time():self.pending=None;self.notice='登录已超时，请重试'
-            return {'accounts':accounts,'active':active,'pending':bool(self.pending),'notice':self.notice}
+            attempts = data.get('login_attempts', {})
+            pending = any(attempt['expires'] > time.time() for attempt in attempts.values())
+            return {'accounts':accounts,'active':active,'pending':pending,'notice':self.notice}
     def begin(self,redirect_uri,account=None):
         if not __import__('re').fullmatch(r'http://127\.0\.0\.1:\d+/auth/callback',redirect_uri):raise ValueError('登录回调地址无效')
         with self.transaction():
-            data=self.read();self.write(data)
+            data=self.read()
             a=data['accounts'].get(account) if account else None
             if account and not a:raise ValueError('未找到已保存的账号')
             verifier=secrets.token_urlsafe(48);state=secrets.token_urlsafe(32);nonce=secrets.token_urlsafe(32)
-            self.pending={'state':state,'nonce':nonce,'verifier':verifier,'redirect':redirect_uri,'account':account,'subject':a.get('subject') if a else None,'expires':time.time()+600}
+            # Keep independent browser flows in the existing Windows-encrypted store.
+            attempts = {key: attempt for key, attempt in data.get('login_attempts', {}).items()
+                        if attempt['expires'] > time.time()}
+            if len(attempts) >= 8:
+                del attempts[min(attempts, key=lambda key: attempts[key]['expires'])]
+            attempts[state]={'state':state,'nonce':nonce,'verifier':verifier,'redirect':redirect_uri,'account':account,'subject':a.get('subject') if a else None,'expires':time.time()+600}
+            data['login_attempts'] = attempts
+            self.write(data)
             values={'client_id':account or 'dynamic_agent_client','ext_agent_host_id':data['host'],'response_type':'code',
               'redirect_uri':redirect_uri,'scope':SCOPE,'resource':RESOURCE,'state':state,'nonce':nonce,'code_challenge_method':'S256',
               'code_challenge':base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')}
@@ -93,21 +112,39 @@ class ChatGPT:
         except Exception:raise ValueError('OpenAI 登录身份校验失败，请重新登录') from None
     def callback(self,params):
         with self.transaction():
-            pending=self.pending
-            if not pending or pending['expires']<time.time() or not secrets.compare_digest(params.get('state',''),pending['state']):raise ValueError('登录回调无效或已超时，请重新登录')
-            self.pending=None
+            state = params.get('state', '')
+            if not isinstance(state, str) or not state or len(state) > 128:
+                raise ValueError('登录回传缺少有效的 state，请从 Zotero 的 AI 设置重新发起授权')
+            data = self.read()
+            receipt = data.get('last_login_receipt', {})
+            digest = hashlib.sha256(state.encode()).hexdigest()
+            if receipt.get('state_hash') == digest and receipt['expires'] > time.time():
+                return '这个登录请求已处理，请返回 Zotero 查看账号状态。'
+            attempts = data.get('login_attempts', {})
+            pending = attempts.get(state)
+            if pending is None:
+                raise ValueError('当前仓库没有这次登录请求，请在发起登录的电脑上打开最新授权页')
+            if pending['expires'] <= time.time():
+                del attempts[state]
+                self.write(data)
+                raise ValueError('这次授权已超过 10 分钟，请从 Zotero 重新登录')
+            if not params.get('code') and not params.get('error'):
+                raise ValueError('尚未收到授权码，请回到授权页完成登录')
+            del attempts[state]
+            self.write(data)
             try:
                 if params.get('error'):raise ValueError('登录未完成或授权被取消，可重新登录')
                 cid=params.get('client_id') or pending['account']
                 if not cid or cid=='dynamic_agent_client' or (pending['account'] and cid!=pending['account']):raise ValueError('登录注册信息不匹配，请重新登录')
                 if not params.get('code'):raise ValueError('未收到登录授权码')
-                tokens=json_request(TOKEN,{'grant_type':'authorization_code','client_id':cid,'code':params['code'],'code_verifier':pending['verifier'],'redirect_uri':pending['redirect'],'resource':RESOURCE},form=True)
+                tokens=json_request(TOKEN,{'grant_type':'authorization_code','client_id':cid,'code':params['code'],'code_verifier':pending['verifier'],'redirect_uri':pending['redirect'],'resource':RESOURCE},form=True,opener=self.network.open)
                 claims=self.validate_identity(tokens.get('id_token',''),cid,pending['nonce'])
                 if pending['subject'] and claims['sub']!=pending['subject']:raise ValueError('返回的账号与所选账号不同，原账号保持不变')
                 if tokens.get('token_type','').lower()!='bearer' or not tokens.get('access_token'):raise ValueError('没有收到可用的 OpenAI 凭据')
                 data=self.read();data['accounts'][cid]={'subject':claims['sub'],'email':claims.get('email',''),'name':claims.get('name',''),
                   'access_token':tokens['access_token'],'refresh_token':tokens.get('refresh_token'),'id_token':tokens['id_token'],
                   'scopes':tokens.get('scope','').split(),'expires':time.time()+int(tokens.get('expires_in',3600))}
+                data['last_login_receipt'] = {'state_hash': digest, 'expires': time.time() + 600}
                 data['active']=cid;self.write(data);self.catalog.pop(cid,None)
                 self.notice='ChatGPT 已登录，请返回 AI 设置选择模型。' if 'chatgpt.tokens.use.direct' in tokens.get('scope','').split() else '身份已登录，但尚未授权订阅使用。请重新登录并允许订阅访问。'
                 return self.notice
@@ -125,7 +162,7 @@ class ChatGPT:
             if 'chatgpt.tokens.use.direct' not in a.get('scopes',[]):raise ValueError('尚未授权此应用使用 ChatGPT 订阅，请重新登录并允许订阅访问')
             if a.get('expires',0)<time.time()+60:
                 if not a.get('refresh_token'):raise ValueError('请重新登录 ChatGPT')
-                try:tokens=json_request(TOKEN,{'grant_type':'refresh_token','client_id':cid,'refresh_token':a['refresh_token'],'resource':RESOURCE},form=True)
+                try:tokens=json_request(TOKEN,{'grant_type':'refresh_token','client_id':cid,'refresh_token':a['refresh_token'],'resource':RESOURCE},form=True,opener=self.network.open)
                 except ProviderError as e:
                     if e.code in {'invalid_grant','invalid_refresh_token','token_expired','refresh_token_expired','refresh_token_invalidated','refresh_token_reused'}:
                         for key in ['access_token','refresh_token','id_token']:a.pop(key,None)
@@ -142,7 +179,11 @@ class ChatGPT:
         cid,token=self.access(cid)
         cached=self.catalog.get(cid)
         if cached and not refresh and cached[0]>time.time()-300:return cached[1]
-        body=json_request(RESOURCE+'/models',token=token)
+        try:body=json_request(RESOURCE+'/models',token=token,opener=self.network.open)
+        except ProviderError:raise
+        except ValueError:
+            if cached and not refresh and cached[0]>time.time()-86400:return cached[1]
+            raise
         models=[{'id':m['slug'],'name':m.get('display_name') or m['slug'],'reasoning_levels':[r['effort'] for r in m.get('supported_reasoning_levels',[]) if isinstance(r,dict) and isinstance(r.get('effort'),str)],'default_effort':m.get('default_reasoning_level','')} for m in body.get('models',[]) if m.get('visibility')=='list' and isinstance(m.get('slug'),str)]
         self.catalog[cid]=(time.time(),models);return models
     def logout(self,cid):
@@ -153,7 +194,7 @@ class ChatGPT:
             if a.get('refresh_token'):
                 try:
                     raw=parse.urlencode({'token':a['refresh_token'],'token_type_hint':'refresh_token','client_id':cid}).encode()
-                    with request.urlopen(request.Request(ISSUER+'/api/accounts/oauth/revoke',data=raw,headers={'Content-Type':'application/x-www-form-urlencoded'}),timeout=15) as response:confirmed=response.status==200
+                    with self.network.open(request.Request(ISSUER+'/api/accounts/oauth/revoke',data=raw,headers={'Content-Type':'application/x-www-form-urlencoded'}),timeout=15) as response:confirmed=response.status==200
                 except (OSError,ValueError):confirmed=False
             for key in ['access_token','refresh_token','id_token']:a.pop(key,None)
             self.write(data);self.catalog.pop(cid,None)
@@ -175,6 +216,7 @@ class ChatGPT:
         if tools:body['tools']=[{'type':'namespace','name':'notebook','description':'User-authorized local research workspace operations','tools':[{'type':'function',**t['function'],'strict':False} for t in tools]}]
         return body
     def chat_stream(self,messages,tools=None,model=None,account=None,effort=None):
+        yield {'type':'phase','text':'正在检查 ChatGPT 登录和模型…'}
         cid,token=self.access(account)
         if not model or model not in {m['id'] for m in self.models(cid=cid)}:raise ValueError('请在 AI 设置中选择此账号可用的模型')
         selected=next((m for m in self.models(cid=cid) if m['id']==model),{})
@@ -184,7 +226,19 @@ class ChatGPT:
             body=self.body(messages,model,tools,effort);text='';completed=None;output_items={}
             req=request.Request(RESOURCE+'/responses',data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'text/event-stream'})
             try:
-                with request.urlopen(req,timeout=45) as response:
+                # Retry only opening the connection, before reading any output or
+                # executing tools. Never replay a partially received response.
+                yield {'type':'phase','text':'正在连接 ChatGPT，等待回答…'}
+                for attempt in range(2):
+                    try:
+                        response=self.network.open(req,timeout=45)
+                        break
+                    except error.HTTPError:raise
+                    except (TimeoutError,error.URLError,ConnectionError,ssl.SSLError) as exc:
+                        if isinstance(getattr(exc,'reason',exc),ssl.SSLCertVerificationError):raise
+                        if attempt:raise
+                        yield {'type':'phase','text':'连接暂时失败，正在重连 ChatGPT（1/1）…'}
+                with response:
                     for raw in response:
                         line=raw.decode('utf-8').strip()
                         if not line.startswith('data:') or line[5:].strip()=='[DONE]':continue
@@ -203,7 +257,7 @@ class ChatGPT:
                 try:code=json.loads(e.read(16000)).get('error',{}).get('code')
                 except (ValueError,AttributeError):code=None
                 raise ProviderError(code or 'http_'+str(e.code)) from None
-            except (TimeoutError,error.URLError):raise ValueError('连接 OpenAI 超时，请检查网络后重试') from None
+            except (TimeoutError,error.URLError,ConnectionError,ssl.SSLError) as exc:raise connection_error(exc,'接收 ChatGPT 回答') from None
             if not completed:raise ValueError('ChatGPT 回答连接中断，部分回答未保存，工具未执行')
             # Some streaming responses deliver the complete items only through
             # output_item.done and leave response.completed.output empty.

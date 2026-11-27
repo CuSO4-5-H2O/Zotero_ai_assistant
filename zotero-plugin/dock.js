@@ -11,6 +11,9 @@ var ResearchNotebookDock = {
     const manual=html('button');manual.textContent='仿真手册';manual.title='在当前浮窗中打开超表面仿真手册';manual.setAttribute('aria-label','打开超表面仿真手册');manual.style.cssText='border:1px solid #b9d0c5;border-radius:5px;background:#fff;color:#245b4c;padding:3px 8px;font:12px system-ui;cursor:pointer;';manual.addEventListener('click',()=>owner.openManual(win).catch(error=>owner.error(error,win)));
     handle.append(label,manual,close);panel.append(handle,browser);doc.documentElement.append(panel);
     const dock={panel,browser,channel,win,pid:null,cleanups:[],show(){panel.style.display='flex';const launcher=doc.getElementById('research-notebook-global-launch');if(launcher)launcher.style.display='none';win.focus();},hide(){panel.style.display='none';const launcher=doc.getElementById('research-notebook-global-launch');if(launcher)launcher.style.display='block';},dispose(){for(const cleanup of this.cleanups)cleanup();const launcher=doc.getElementById('research-notebook-global-launch');if(launcher)launcher.style.display='block';panel.remove();}};
+    try{const listener={QueryInterface:ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),onStateChange(){},onProgressChange(){},onStatusChange(){},onSecurityChange(){},onLocationChange(progress,request,uri,flags){if(progress.isTopLevel!==false&&(flags&Components.interfaces.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE))dock.connectionFailed=true;}};
+      browser.addProgressListener(listener);dock.cleanups.push(()=>browser.removeProgressListener(listener));
+    }catch(_){}
     close.addEventListener('click',()=>dock.hide());
     const layout=ResearchNotebookTranslation.floating(panel,handle,win,'dock',340,300);dock.cleanups.push(()=>layout.dispose());
     const unload=()=>{dock.dispose();owner.docks.delete(win);};win.addEventListener('unload',unload,{once:true});dock.cleanups.push(()=>win.removeEventListener('unload',unload));

@@ -1,4 +1,4 @@
-# Zotero AI Assistant · 2.0.29
+# Zotero AI Assistant · 2.2.9
 
 在 Zotero 原窗口中阅读 PDF、写 Markdown 笔记、划词翻译、总结和向 AI 提问。支持星标置顶、独立报告、工程文件、对话归档与在线文献检索。
 
@@ -48,7 +48,7 @@ py -3.12 tools/bootstrap.py --zotero-storage 'D:\Zotero\storage'
 
 已有 2.0.19 或更早版本需先按常规方式更新源码并重新运行构建脚本一次，才能获得这套更新器。ZIP 方式安装、非 `main` 分支、本地改过源码、依赖发生变化或网络不可用时，自动更新会跳过；状态记录在 `.runtime/github-update-status.json`。依赖变化时请先更新源码、运行安装脚本，再重启本地后台。个人笔记、PDF、报告、工程文件和配置不在版本库中。当前 GitHub 不提供单独 XPI 的直接自动升级，以免插件与旧后台不匹配。
 
-扫描 PDF 需要外部 OCR。Undermind 目前采用网页搜索后粘贴 DOI 导入，尚无插件内一键账号连接。Elicit 网页登录不等于本插件 API 权限。全文下载受出版社、机构权限和网络限制，不保证全部成功。ChatGPT 登录适配器为实验能力，Plus 订阅不等于通用 API 额度。
+扫描 PDF 可通过可选的本地 OCR 组件识别。Undermind 目前采用网页搜索后粘贴 DOI 导入，尚无插件内一键账号连接。Elicit 网页登录不等于本插件 API 权限。全文下载受出版社、机构权限和网络限制，不保证全部成功。ChatGPT 登录适配器为实验能力，Plus 订阅不等于通用 API 额度。
 
 AI 调用会将相关选文、PDF 文字或工具读取内容发送给所选服务；联网搜索会发送查询词。回答和页码需要对照原文。
 

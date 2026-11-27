@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>超表面仿真手册 · 科研笔记仓库</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/reader.css">
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="/manual.css">
+  <script defer src="/vendor/katex/katex.min.js"></script>
+  <script defer src="/shared.js"></script>
+  <script defer src="/manual.js"></script>
+</head>
+<body class="simulation-manual">
+  <a class="manual-skip" href="#manual-content">跳到正文</a>
+  <header class="manual-masthead">
+    <a class="manual-brand" href="#/home" aria-label="超表面仿真手册首页"><span class="manual-mark" aria-hidden="true">M</span><span>超表面仿真手册<small>建模 · 调试 · 验证</small></span></a>
+    <span id="manual-version" class="manual-version">正在连接…</span>
+  </header>
+  <div class="manual-search-bar">
+    <label class="manual-search-label"><span aria-hidden="true">⌕</span><input id="manual-search" type="search" autocomplete="off" placeholder="搜索问题、设置、案例或文献" aria-label="搜索整本仿真手册"><kbd>Ctrl K</kbd></label>
+    <button id="manual-clear-search" class="manual-button" hidden aria-label="清除搜索">清除</button>
+  </div>
+  <nav id="manual-top-nav" class="manual-top-nav" aria-label="手册工作区">
+    <a href="#/home" data-view="home">概览</a><a href="#/chapters" data-view="chapters">操作指南</a><a href="#/sources" data-view="sources">文献证据</a><a href="#/cases" data-view="cases">参数案例</a><a href="#/calculator" data-view="calculator">辅助计算</a><a href="#/saved" data-view="saved">我的书签</a>
+  </nav>
+  <div id="manual-error" class="manual-alert" role="alert" hidden></div>
+  <section id="manual-search-results" class="manual-search-results" aria-label="全局搜索结果" hidden><div class="manual-results-heading"><h2 id="manual-search-heading">搜索结果</h2><button id="manual-close-search" class="manual-button">收起</button></div><div id="manual-search-items" aria-live="polite"></div></section>
+  <div class="manual-layout">
+    <aside class="manual-sidebar" aria-label="手册章节导航">
+      <details id="manual-nav-details" open>
+        <summary>章节目录 <span id="manual-chapter-count"></span></summary>
+        <label class="manual-filter-label" for="manual-topic">按专题筛选</label>
+        <select id="manual-topic"><option value="">全部专题</option></select>
+        <input id="manual-chapter-filter" type="search" placeholder="在目录中查找" aria-label="筛选章节目录">
+        <nav id="manual-chapter-list" aria-label="手册章节"></nav>
+      </details>
+      <p class="manual-local-hint">正文与证据保存在本机。阅读进度、勾选和书签只保存在当前浏览器。</p>
+    </aside>
+    <main id="manual-content" class="manual-content" tabindex="-1" aria-label="手册内容">
+      <div id="manual-loading" class="manual-loading" role="status">正在读取手册…</div>
+      <div id="manual-view"></div>
+    </main>
+  </div>
+  <footer class="manual-footer"><span>科研笔记仓库 · 仿真知识工作台</span><span id="manual-status" role="status">无需 AI 服务即可阅读</span></footer>
+  <dialog id="manual-note-dialog" class="manual-note-dialog">
+    <form id="manual-note-form">
+      <header><h2>新建仿真实验笔记</h2><button id="manual-note-close" type="button" class="dialog-close" aria-label="关闭新建笔记">×</button></header>
+      <p class="manual-muted">新建独立笔记，不修改手册或已有阅读笔记。先填写本次任务，再开始求解。</p>
+      <label>笔记标题<input id="manual-note-title" required maxlength="100" autocomplete="off"></label>
+      <label>实验记录<textarea id="manual-note-body" rows="12" required spellcheck="false"></textarea></label>
+      <p id="manual-note-status" role="status"></p>
+      <footer><button id="manual-note-cancel" type="button" class="manual-button">取消</button><button id="manual-note-submit" type="submit" class="manual-button primary">创建到“实验记录”</button></footer>
+    </form>
+  </dialog>
+  <div id="manual-toast" role="status" hidden></div>
+  <noscript><p>交互式手册需要 JavaScript。正文 Markdown 文件仍保存在本机 manuals/metasurface/chapters 中。</p></noscript>
+</body>
+</html>

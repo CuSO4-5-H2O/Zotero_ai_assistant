@@ -63,8 +63,8 @@ class NoteTests(unittest.TestCase):
   def fail():raise ValueError('provider failed');yield
   ds.chat_stream.side_effect=[first,fail()]
   with self.assertRaises(ValueError):list(store.stream('D6',{'question':'新建笔记并总结论文创新','version':'0'},ds))
-  self.assertEqual(len(store.get('D6')['recent_actions']),1);self.assertEqual(store.get('D6')['messages'],[])
-  ds.chat_stream.reset_mock();ds.chat_stream.side_effect=None;ds.chat_stream.return_value=iter([{'type':'done','text':'answer','model':'test'}]);list(store.stream('D6',{'question':'这篇论文的创新是什么？','version':'0'},ds));self.assertIn('tools',ds.chat_stream.call_args.kwargs)
+  self.assertEqual(len(store.get('D6')['recent_actions']),1);self.assertTrue(store.get('D6')['messages'][-1]['failed'])
+  ds.chat_stream.reset_mock();ds.chat_stream.side_effect=None;ds.chat_stream.return_value=iter([{'type':'done','text':'answer','model':'test'}]);list(store.stream('D6',{'question':'这篇论文的创新是什么？','version':store.get('D6')['version']},ds));self.assertIn('tools',ds.chat_stream.call_args.kwargs)
 
 class ToolStreamTests(unittest.TestCase):
  def test_split_function_call_is_assembled_before_execution(self):

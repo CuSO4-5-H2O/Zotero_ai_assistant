@@ -2,7 +2,7 @@
 // Keep completed blocks mounted; render formulas before exposing changed blocks.
 var ResearchChatStream={
   apply(output,html,state){
-    const scroller=output.closest('main'),top=scroller?.scrollTop||0;
+    const scroller=output.getClientRects().length?output.closest('main'):null,top=scroller?.scrollTop||0;
     const follow=scroller&&scroller.scrollHeight-scroller.clientHeight-top<48&&!document.getSelection()?.toString();
     const template=document.createElement('template');template.innerHTML=html;
     const fresh=[...template.content.childNodes],keys=fresh.map(n=>n.nodeType+':'+(n.outerHTML??n.textContent)),old=[...output.childNodes],previous=state.keys||[];
@@ -20,8 +20,8 @@ var ResearchChatStream={
 };
 var ResearchChat=(()=>{
   const $=id=>document.getElementById(id),{api,paintMath}=ResearchUI;
-  let paper=null,conversation={version:'0',messages:[]},run=0,controller=null,loading=false,preparing=false;
-  const drafts=new Map(),selectionContexts=new Map(),historyOpen=new Map();
+  let paper=null,conversation={version:'0',messages:[]},run=0,controller=null,loading=false,preparing=false,workspacePinned=false;
+  const drafts=new Map(),selectionContexts=new Map(),historyOpen=new Map(),collapsedMessages=new Set();
   const base=pid=>pid==='workspace'?'/api/workspace':'/api/papers/'+pid;
   const excerptButton=document.createElement('button');excerptButton.type='button';excerptButton.id='chat-selection-excerpt';excerptButton.textContent='摘录选文到笔记';excerptButton.className='chat-selection-excerpt';excerptButton.hidden=true;document.body.append(excerptButton);
   let answerSelection=null,excerptBusy=false;
@@ -38,8 +38,9 @@ var ResearchChat=(()=>{
   document.addEventListener('mousedown',event=>{if(!event.target.closest?.('#chat-selection-excerpt')){excerptButton.hidden=true;answerSelection=null;}});
   excerptButton.addEventListener('mousedown',event=>event.preventDefault());
   excerptButton.addEventListener('click',async()=>{const selected=answerSelection;if(!selected||excerptBusy)return;if(!selected.target){status('请先打开目标文献笔记或仓库笔记',true);return;}excerptBusy=true;excerptButton.disabled=true;try{const quote=selected.text.split(/\r?\n/).map(line=>'> '+line).join('\n');const result=await ResearchUI.appendSelectionNote(selected.target,quote);status('选文已摘录到 '+result.title);excerptButton.hidden=true;answerSelection=null;}catch(error){status(error.message+'；选文仍保留，请重试',true);}finally{excerptBusy=false;excerptButton.disabled=false;}});
-  const actionNames={import_literature:'已启动文献入库',create_note:'已新建',update_note:'已编辑',delete_note:'已移入回收站',restore_note:'已恢复',create_project_file:'已新建文件',update_project_file:'已修改文件',trash_project_file:'已移入可恢复记录',restore_project_file:'已恢复文件',add_paper_tags:'已添加标签',remove_paper_tags:'已移除标签'};
+  const actionNames={update_zotero_item:'已更新题录',trash_zotero_item:'已更新文献回收站',create_report:'已新建报告',update_report:'已更新报告',trash_report:'已更新报告回收站',export_zotero_annotations:'已导出划线与批注',combine_reading_notes:'已整合阅读笔记',import_literature:'已启动文献入库',create_note:'已新建',update_note:'已编辑',delete_note:'已移入回收站',restore_note:'已恢复',create_project_file:'已新建文件',update_project_file:'已修改文件',trash_project_file:'已移入可恢复记录',restore_project_file:'已恢复文件',add_paper_tags:'已添加标签',remove_paper_tags:'已移除标签'};
   const status=(text,error=false)=>{$('chat-status').textContent=text;$('chat-status').classList.toggle('chat-error',error);};
+  actionNames.fetch_fulltext='已启动原文获取';
   function stop(){run++;controller?.abort();controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}
   function button(text,action){const b=document.createElement('button');b.type='button';b.textContent=text;b.onclick=action;return b;}
   function message(role,text,html,metadata,target=$('chat-messages')){
@@ -48,6 +49,10 @@ var ResearchChat=(()=>{
     const body=document.createElement('div');body.className=role==='assistant'?'chat-answer prose selectable':'chat-question';
     if(html){body.innerHTML=html;paintMath(body);}else body.textContent=text;
     const heading=document.createElement('div');heading.className='chat-message-heading';heading.append(who);
+    const foldKey=metadata?.id?paper?.id+':'+role+':'+metadata.id:null;
+    const fold=button('折叠',()=>{const collapsed=fold.getAttribute('aria-expanded')==='true';setCollapsed(collapsed);if(foldKey){if(collapsed)collapsedMessages.add(foldKey);else collapsedMessages.delete(foldKey);}});fold.className='quiet chat-fold';
+    function setCollapsed(collapsed){for(const child of item.children)if(child!==heading)child.hidden=collapsed;fold.textContent=collapsed?'展开':'折叠';fold.setAttribute('aria-expanded',String(!collapsed));fold.title=collapsed?'展开这条对话':'折叠这条对话';}
+    heading.append(fold);
     if(metadata?.id){const remove=button('删除本轮',()=>editConversation('delete_turn',metadata.id));remove.title='删除这一轮提问和回答，可撤销';remove.className='quiet';heading.append(remove);}
     item.append(heading,body);
     if(role==='user'&&metadata?.selection_context){const details=document.createElement('details'),label=document.createElement('summary'),quote=document.createElement('blockquote');details.className='chat-past-selection';label.textContent='查看本轮选文';quote.textContent=metadata.selection_context.text;details.append(label,quote);item.append(details);}
@@ -57,19 +62,20 @@ var ResearchChat=(()=>{
       const pid=paper.id;
       const saveAnswer=button('追加到本文献笔记',async()=>{saveAnswer.disabled=true;try{const content='## AI 问答\n\n'+(metadata.question?'**问题：** '+metadata.question+'\n\n':'')+text+'\n';await ResearchUI.appendSelectionNote('paper:'+pid,content);saveAnswer.textContent='已追加';status('已追加到 '+pid+' 文献笔记，旧内容保留在历史版本');}catch(e){saveAnswer.disabled=false;status(e.message,true);}});
       if(pid!=='workspace')tools.append(saveAnswer);
-      for(const page of metadata.cited_pages||[]){
-        tools.append(button('PDF 第 '+page+' 页',async()=>{try{if(paper?.id!==pid)return;if(paper.zotero)await api('/api/zotero/action',{paper_id:pid,action:'open_pdf',page});else window.open('/api/papers/'+pid+'/pdf#page='+page,'_blank','noopener');}catch(e){status(e.message,true);}}));
+        for(const page of metadata.cited_pages||[]){
+          tools.append(button((metadata.document_format==='epub'?'EPUB 第 '+page+' 节':'PDF 第 '+page+' 页'),async()=>{try{if(paper?.id!==pid)return;if(paper.zotero)await api('/api/zotero/action',{paper_id:pid,action:'open_location',page});else window.open('/api/papers/'+pid+'/pdf#page='+page,'_blank','noopener');}catch(e){status(e.message,true);}}));
       }
       item.append(tools);
     }
-    target.append(item);return body;
+    setCollapsed(!!foldKey&&collapsedMessages.has(foldKey));target.append(item);return body;
   }
-  function render(keepScroll=false){
-    const root=$('chat-messages'),fragment=document.createDocumentFragment(),scroller=root.closest('main'),top=scroller?.scrollTop||0,follow=scroller&&scroller.scrollHeight-scroller.clientHeight-top<48;
-    const cutoff=conversation.messages.length>20?conversation.messages.length-12:0;
-    if(cutoff){const details=document.createElement('details'),summary=document.createElement('summary'),older=document.createElement('div'),pid=paper.id;details.className='chat-older';summary.textContent='较早的 '+Math.floor(cutoff/2)+' 轮对话 · 点击展开';details.append(summary,older);details.open=historyOpen.get(pid)||false;let built=false;const populate=()=>{if(built)return;for(const m of conversation.messages.slice(0,cutoff))message(m.role,m.content,m.html,m,older);built=true;};if(details.open)populate();details.addEventListener('toggle',()=>{historyOpen.set(pid,details.open);if(details.open)populate();});fragment.append(details);}
-    for(const m of conversation.messages.slice(cutoff))message(m.role,m.content,m.html,m,fragment);
-    if(!conversation.messages.length){const p=document.createElement('p');p.className='chat-empty';p.textContent='从一个具体问题开始。你也可以点击上方问题，随后继续追问。';fragment.append(p);}root.replaceChildren(fragment);
+  function render(keepScroll=false,pending=false){
+    const root=$('chat-messages'),fragment=document.createDocumentFragment(),scroller=root.getClientRects().length?root.closest('main'):null,top=scroller?.scrollTop||0,follow=scroller&&scroller.scrollHeight-scroller.clientHeight-top<48;
+    const messages=paper?.id==='workspace'?conversation.messages.slice(pending?-8:-10):conversation.messages;
+    const cutoff=messages.length>20?messages.length-12:0;
+    if(cutoff){const details=document.createElement('details'),summary=document.createElement('summary'),older=document.createElement('div'),pid=paper.id;details.className='chat-older';summary.textContent='较早的 '+Math.floor(cutoff/2)+' 轮对话 · 点击展开';details.append(summary,older);details.open=historyOpen.get(pid)||false;let built=false;const populate=()=>{if(built)return;for(const m of messages.slice(0,cutoff))message(m.role,m.content,m.html,m,older);built=true;};if(details.open)populate();details.addEventListener('toggle',()=>{historyOpen.set(pid,details.open);if(details.open)populate();});fragment.append(details);}
+    for(const m of messages.slice(cutoff))message(m.role,m.content,m.html,m,fragment);
+    if(!messages.length){const p=document.createElement('p');p.className='chat-empty';p.textContent=paper?.id==='workspace'?'有什么需要帮你处理的？':'从一个具体问题开始。你也可以点击上方问题，随后继续追问。';fragment.append(p);}root.replaceChildren(fragment);
     renderActions();renderSelection();$('clear-chat').textContent='清空对话';$('undo-chat').hidden=!conversation.can_undo;$('clear-chat').disabled=!conversation.messages.length;
     if(keepScroll&&scroller)scroller.scrollTop=follow?scroller.scrollHeight-scroller.clientHeight:top;
   }
@@ -78,7 +84,7 @@ var ResearchChat=(()=>{
     for(const row of rows.slice(-15).reverse()){
       const card=document.createElement('div');card.className='note-action-card';
       const label=document.createElement('span');label.textContent=actionNames[row.action]+' · '+row.title;
-      card.append(label);if(row.kind==='literature')card.append(button('查看入库进度',()=>document.dispatchEvent(new CustomEvent('research-literature-task',{detail:{task_id:row.task_id}}))));if(!row.kind)card.append(button('打开笔记',()=>document.dispatchEvent(new CustomEvent('research-open-note',{detail:{note_id:row.note_id}}))));if(row.kind==='project'&&row.history_id){const b=button('复制恢复编号',()=>navigator.clipboard.writeText(row.history_id));card.append(b);}
+      card.append(label);if(row.kind==='report')card.append(button('打开报告',()=>document.dispatchEvent(new CustomEvent('research-open-report',{detail:{report_id:row.note_id}}))));if(row.kind==='literature')card.append(button('查看入库进度',()=>document.dispatchEvent(new CustomEvent('research-literature-task',{detail:{task_id:row.task_id}}))));if(!row.kind)card.append(button('打开笔记',()=>document.dispatchEvent(new CustomEvent('research-open-note',{detail:{note_id:row.note_id}}))));if(row.kind==='project'&&row.history_id){const b=button('复制恢复编号',()=>navigator.clipboard.writeText(row.history_id));card.append(b);}
       if(['delete_note','trash_project_file'].includes(row.action)&&[...rows].reverse().find(r=>r.note_id===row.note_id)?.id===row.id)card.append(button('恢复',async()=>{try{const data=await api(base(paper.id)+'/note-actions/restore',{action_id:row.id});conversation.recent_actions=data.recent_actions;renderActions();document.dispatchEvent(new CustomEvent('research-note-action',{detail:data}));status('笔记已恢复');}catch(e){status(e.message,true);}}));
       $('note-action-list').append(card);
     }
@@ -86,6 +92,13 @@ var ResearchChat=(()=>{
   function renderSelection(){
     const selected=selectionContexts.get(paper?.id);$('chat-selection').hidden=!selected;
     if(selected){$('chat-selection-text').textContent=selected.text;$('chat-selection-label').textContent=({'original':'原文选文','translation':'译文选文','summary':'总结选文'}[selected.kind]||'当前选文')+(selected.page?' · PDF 第 '+selected.page+' 页':'');}
+  }
+  async function syncConversation(pid,keepScroll=true){
+    const current=run,data=await api(base(pid)+'/chat');
+    if(current!==run||paper?.id!==pid)return false;
+    const changed=data.version!==conversation.version;conversation=data;
+    if(changed)render(keepScroll);
+    return true;
   }
   async function setSelection(value,event){
     await open(value);if(paper?.id!==value?.id)return;
@@ -96,16 +109,18 @@ var ResearchChat=(()=>{
     if(loading){status('请先停止回答，再删除对话',true);return;}
     const pid=paper.id,current=++run;loading=true;$('send-chat').disabled=true;
     try{const data=await api(base(pid)+'/chat/edit',{action,message_id:messageId,version:conversation.version});if(current!==run)return;conversation=data;render();status(action==='undo'?'已恢复删除的对话':'对话已删除，可撤销；不会再发送给 AI');}
-    catch(e){if(current===run)status(e.message,true);}
+    catch(e){if(current===run){try{await syncConversation(pid);}catch(_){}if(current===run)status(e.status===409?'对话已同步，输入已保留；请核对记录后重试此操作':e.message,true);}}
     finally{if(current===run){loading=false;$('send-chat').disabled=false;$('clear-chat').textContent='清空对话';}}
   }
-  async function open(value,force=false){
-    if(!value)value={id:'workspace'};$('chat-heading-title').textContent=value.id==='workspace'?'科研工作区助手':'与当前论文对话';for(const [i,b] of [...document.querySelectorAll('[data-question]')].entries()){b.textContent=value.id==='workspace'?b.dataset.workspaceLabel:b.dataset.originalLabel;b.dataset.question=value.id==='workspace'?b.dataset.workspaceQuestion:b.dataset.originalQuestion;}
+  async function open(value,force=false,general=false){
+    workspacePinned=general;if(general)value={id:'workspace'};
+    $('chat-workspace').classList.toggle('general-assistant',general);$('chat-workspace').setAttribute('aria-label',general?'通用 AI 助手':'文献 AI 助手');$('chat-question').placeholder=general?'描述你想查找、阅读或整理的内容…':'围绕当前文献提问，或交给助手处理…';
+    if(!value)value={id:'workspace'};$('chat-heading-title').textContent=value.id==='workspace'?'科研助手':'与当前文献对话';for(const [i,b] of [...document.querySelectorAll('[data-question]')].entries()){b.textContent=value.id==='workspace'?b.dataset.workspaceLabel:b.dataset.originalLabel;b.dataset.question=value.id==='workspace'?b.dataset.workspaceQuestion:b.dataset.originalQuestion;}
     $('chat-form').hidden=false;
-    if(paper?.id===value.id&&!force)return true;
+    if(paper?.id===value.id&&!force){if(loading||preparing)return true;try{return await syncConversation(value.id);}catch(e){status(e.message,true);return false;}}
     if(paper)drafts.set(paper.id,$('chat-question').value);
     stop();paper={id:value.id,zotero:value.zotero};renderSelection();const current=run;loading=true;$('send-chat').disabled=true;
-    $('chat-question').value=drafts.get(paper.id)||'';$('chat-messages').replaceChildren();status('正在载入这篇论文的对话…');
+    $('chat-question').value=drafts.get(paper.id)||'';$('chat-messages').replaceChildren();status(value.id==='workspace'?'正在载入科研助手…':'正在载入文献对话…');
     try{const data=await api(base(paper.id)+'/chat');if(current!==run)return false;conversation=data;render();status('对话已载入 · '+conversation.messages.filter(m=>m.role==='user').length+' 轮');return true;}
     catch(e){if(current===run)status(e.message,true);return false;}
     finally{if(current===run){loading=false;$('send-chat').disabled=false;}}
@@ -114,7 +129,7 @@ var ResearchChat=(()=>{
     event?.preventDefault();if(ResearchUI.aiSaving){status('模型设置正在保存，请稍后发送');return;}if(loading||preparing||!paper)return;
     const question=$('chat-question').value.trim();if(!question)return;
     let currentPage=null;
-    if(new URLSearchParams(location.search).get('host')==='zotero'){
+    if(!workspacePinned&&paper.id!=='workspace'&&new URLSearchParams(location.search).get('host')==='zotero'){
       preparing=true;$('send-chat').disabled=true;status('正在同步 Zotero 当前 PDF…');
       try{
         const active=await api('/api/zotero/current',{});
@@ -125,20 +140,31 @@ var ResearchChat=(()=>{
       }catch(error){status('无法确认当前 PDF：'+error.message+'；本次尚未发送给 AI。',true);return;}
       finally{preparing=false;$('send-chat').disabled=false;}
     }
+    const targetID=paper.id;preparing=true;$('send-chat').disabled=true;
+    try{if(!await syncConversation(targetID))return;if(conversation.busy){status('助手正在处理另一项任务，当前问题已保留；完成后可继续发送');return;}}
+    catch(error){status(error.message,true);return;}
+    finally{preparing=false;$('send-chat').disabled=loading;}
     const current=++run,pid=paper.id;controller=new AbortController();loading=true;$('send-chat').disabled=true;$('stop-chat').hidden=false;
+    if(pid==='workspace')render(true,true);
     if(!conversation.messages.length)$('chat-messages').replaceChildren();
-    message('user',question);const output=message('assistant','正在处理…');let text='',done=false,buffer='',previewTimer=null,previewBusy=false,previewDirty=false,previewClosed=false,phaseEpoch=0,actionCount=0;const layout={};output.classList.add('chat-streaming');
-    const preview=async()=>{previewTimer=null;if(previewBusy||current!==run||done||previewClosed)return;previewBusy=true;previewDirty=false;const snapshot=text,epoch=phaseEpoch;try{const data=await api('/api/preview',{content:snapshot});if(current===run&&!done&&!previewClosed&&epoch===phaseEpoch&&output.isConnected)ResearchChatStream.apply(output,data.html,layout);}catch(_){}finally{previewBusy=false;if(previewDirty&&current===run&&!done&&!previewClosed)previewTimer=setTimeout(preview,160);}};
+    message('user',question);const output=message('assistant','正在处理…');let text='',done=false,doneMessage=null,buffer='',previewTimer=null,previewBusy=false,previewDirty=false,previewClosed=false,phaseEpoch=0,actionCount=0;const layout={};output.classList.add('chat-streaming');
+    const preview=async()=>{previewTimer=null;if(previewBusy||current!==run||done||previewClosed)return;previewBusy=true;previewDirty=false;const snapshot=text,epoch=phaseEpoch;try{const data=await api('/api/preview',{content:snapshot});if(current===run&&!done&&!previewClosed&&epoch===phaseEpoch&&output.isConnected)ResearchChatStream.apply(output,data.html,layout);}catch(_){}finally{previewBusy=false;if(previewDirty&&current===run&&!done&&!previewClosed)previewTimer=setTimeout(preview,350);}};
+    let progressLabel='正在准备所需上下文',progressAt=Date.now();
+    const progressTimer=setInterval(()=>{if(current===run&&!done)status(progressLabel+' · 已等待 '+Math.floor((Date.now()-progressAt)/1000)+' 秒');},1000);
     status('正在准备所需上下文…');
     try{
       const response=await fetch(base(pid)+'/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Notebook-Request':'1'},body:JSON.stringify({question,version:conversation.version,context_note:document.body.dataset.note||null,selection_context:selectionContexts.get(pid)||null,current_page:currentPage}),signal:controller.signal});
-      if(!response.ok){const error=await response.json();throw new Error(error.error||'请求失败');}
+      if(!response.ok){const body=await response.json(),error=new Error(body.error||'请求失败');error.status=response.status;error.code=body.code;throw error;}
       const reader=response.body.getReader(),decoder=new TextDecoder();
       const consume=line=>{if(!line.trim()||current!==run)return;const event=JSON.parse(line);
         if(event.type==='error')throw new Error(event.error);
-        if(event.type==='source'){status(event.notes_only?'正在处理任务…':'已读取 '+event.pages+' 页 PDF 文字层，其中 '+event.readable_pages+' 页有文字'+(event.source_changed?'；附件已更换，本次使用新上下文':'')+' · 正在回答…');if(event.notes_only)output.textContent='正在处理任务…';}
-        if(event.type==='delta'){text+=event.text;previewDirty=true;if(!previewTimer&&!previewBusy)previewTimer=setTimeout(preview,layout.rendered?160:0);}
-        if(event.type==='phase'){phaseEpoch++;text='';layout.keys=[];output.textContent=event.text;}
+        if(event.type==='source'){status(event.notes_only?'正在处理任务…':'已读取 '+(event.context_pages??event.pages)+' 页/节原文，全文共 '+event.pages+' 页/节'+(event.source_changed?'；附件已更换，本次使用新上下文':'')+' · 正在回答…');if(event.notes_only)output.textContent='正在处理任务…';}
+        if(event.type==='delta'){text+=event.text;previewDirty=true;if(!previewTimer&&!previewBusy)previewTimer=setTimeout(preview,layout.rendered?350:0);}
+        if(event.type==='phase'){phaseEpoch++;text='';layout.keys=[];output.textContent=event.text;progressLabel=event.text;progressAt=Date.now();}
+        if(event.type==='source'){progressLabel='已读取上下文，正在等待模型处理';progressAt=Date.now();}
+        if(event.type==='tool_status'){progressLabel='正在执行 '+event.name;progressAt=Date.now();}
+        if(event.type==='tool_error'){progressLabel='工具执行失败：'+event.error;progressAt=Date.now();}
+        if(event.type==='note_action'){progressLabel='已执行操作，正在整理回执';progressAt=Date.now();}
         if(event.type==='tool_status')status(({search_notes:'正在查找笔记',read_note:'正在读取笔记',create_note:'正在新建笔记',update_note:'正在编辑笔记',delete_note:'正在移入回收站',restore_note:'正在恢复笔记',append_note:'正在追加笔记',web_search:'正在联网搜索',read_web_page:'正在核对网页来源',search_literature:'正在检索学术文献',import_literature:'正在启动后台入库',literature_task:'正在读取入库进度'}[event.name]||'正在处理任务')+'…');
         if(event.type==='tool_error')status(event.error,true);
         if(event.type==='note_action'){
@@ -148,27 +174,34 @@ var ResearchChat=(()=>{
           if(!conversation.recent_actions.some(r=>r.id===event.id))conversation.recent_actions.push(event);
           renderActions();status(actionNames[event.action]+' · '+event.title);document.dispatchEvent(new CustomEvent('research-note-action',{detail:event}));
         }
-        if(event.type==='done'){done=true;conversation.version=event.version;}
+        if(event.type==='done'){done=true;doneMessage=event.message;conversation.version=event.version;}
       };
       while(true){const part=await reader.read();if(part.done)break;buffer+=decoder.decode(part.value,{stream:true});const lines=buffer.split('\n');buffer=lines.pop();for(const line of lines)consume(line);}
       buffer+=decoder.decode();if(buffer.trim())consume(buffer);
       if(current!==run)return;if(!done)throw new Error('回答连接中断，部分内容未保存');
-      if($('chat-question').value.trim()===question){drafts.delete(pid);$('chat-question').value='';}conversation=await api(base(pid)+'/chat');if(current!==run)return;render(true);status(paper.id==='workspace'?'回答已保存到工作区对话，可继续追问或归档到工程':'回答已保存到当前论文，可继续追问或追加到本文献笔记');
-    }catch(e){previewClosed=true;if(current===run){const reason=e.name==='AbortError'?'已停止，部分回答未保存':e.message;status(reason,true);output.textContent=text?text+'\n\n'+reason:(actionCount?'部分操作已完成，请查看操作记录。\n':'')+reason;}}
-    finally{previewClosed=true;clearTimeout(previewTimer);output.classList.remove('chat-streaming');if(current===run){controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}}
+      if($('chat-question').value.trim()===question){drafts.delete(pid);$('chat-question').value='';}
+      if(doneMessage){conversation.messages.push({role:'user',content:question},doneMessage);render(true);}
+      try{const data=await api(base(pid)+'/chat');if(current!==run)return;conversation=data;}catch(_){if(current===run)status('回答已保存，记录同步暂时中断；可继续提问');return;}
+      if(current!==run)return;render(true);status(paper.id==='workspace'?'回答已保存到工作区对话，可继续追问或归档到工程':'回答已保存到当前论文，可继续追问或追加到本文献笔记');
+    }catch(e){previewClosed=true;if(current===run){const reason=e.name==='AbortError'?'已停止，已执行操作保留在记录中':e.message;let restored=false;
+      try{const data=await api(base(pid)+'/chat');if(current===run&&data.version!==conversation.version){conversation=data;render(true);restored=true;}}catch(_){}
+      if(current===run){status(reason,true);if(!restored)output.textContent=text?text+'\n\n'+reason:(actionCount?'部分操作已完成，请查看操作记录。\n':'')+reason;}
+    }}
+    finally{clearInterval(progressTimer);previewClosed=true;clearTimeout(previewTimer);output.classList.remove('chat-streaming');if(current===run){controller=null;loading=false;$('send-chat').disabled=false;$('stop-chat').hidden=true;}}
   }
   $('chat-form').onsubmit=ask;
   $('stop-chat').onclick=()=>{stop();status('已停止；完整记录重新载入后可继续查看，部分回答未保存');};
   $('chat-selection-clear').onclick=()=>{if(paper)selectionContexts.delete(paper.id);renderSelection();};
   $('archive-chat').onclick=async()=>{if(!paper||loading){status('请等待当前回答完成再归档',true);return;}try{const result=await api(base(paper.id)+'/chat/archive',{version:conversation.version});status('完整对话已归档到工程文件：'+result.title);document.dispatchEvent(new Event('research-project-changed'));}catch(e){status(e.message,true);}};
-  $('reload-chat').onclick=()=>open(paper,true);
+  $('reload-chat').onclick=()=>open(paper,true,workspacePinned);
   $('clear-chat').onclick=()=>{if($('clear-chat').textContent!=='确认清空'){ $('clear-chat').textContent='确认清空';status('再次点击确认清空当前对话，可撤销');return;}editConversation('clear');};
   $('undo-chat').onclick=()=>editConversation('undo');
   $('chat-question').oninput=()=>{if(paper)drafts.set(paper.id,$('chat-question').value);};
   $('chat-question').onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();ask();}};
   document.querySelectorAll('[data-question]').forEach((b,i)=>{b.dataset.originalQuestion=b.dataset.question;b.dataset.originalLabel=b.textContent;b.dataset.workspaceQuestion=['列出当前工程文件','整理仓库中最近的笔记','新建一篇“研究计划”笔记，记录当前课题目标、待验证问题和下一步实验。'][i];b.dataset.workspaceLabel=['查看工程文件','整理仓库笔记','新建研究计划'][i];});
   document.querySelectorAll('[data-question]').forEach(b=>b.onclick=()=>{$('chat-question').value=b.dataset.question;ask();});
-  document.addEventListener('research-paper-change',e=>{if(paper?.id!==e.detail.id){excerptButton.hidden=true;answerSelection=null;stop();if(paper)drafts.set(paper.id,$('chat-question').value);paper=null;conversation={version:'0',messages:[]};$('chat-messages').replaceChildren();}});
+  document.addEventListener('research-paper-change',e=>{if(workspacePinned)return;if(paper?.id!==e.detail.id){excerptButton.hidden=true;answerSelection=null;stop();if(paper)drafts.set(paper.id,$('chat-question').value);paper=null;conversation={version:'0',messages:[]};$('chat-messages').replaceChildren();}});
   window.addEventListener('pagehide',stop);
-  return {open,setSelection};
+  window.addEventListener('focus',()=>{if(paper&&!loading&&!preparing)syncConversation(paper.id).catch(()=>{});});
+  return {open,openWorkspace:()=>open({id:'workspace'},false,true),setSelection};
 })();

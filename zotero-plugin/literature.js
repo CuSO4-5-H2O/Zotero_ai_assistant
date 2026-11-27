@@ -1,6 +1,20 @@
 /* Original adapter: Zotero owns all item and storage writes. */
 var ResearchNotebookLiterature={
   pending:new Map(),
+  isSupplement(attachment){return /^(?:SI\s*(?:\[|[:：-])|supporting information\b|supplementary (?:information|material|data)|补充材料|支持信息)/i.test(attachment.getField('title')||'')||/(?:_MOESM\d+_|-sup-\d+-)/i.test(attachment.getField('url')||'');},
+  async otherLocalPDF(item){
+    const doi=item.getField('DOI');if(!doi)return null;
+    const normalize=s=>String(s||'').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu,'');
+    const search=new Zotero.Search();search.libraryID=item.libraryID;search.addCondition('deleted','false');search.addCondition('DOI','is',doi);
+    for(const id of await search.search()){
+      const other=await Zotero.Items.getAsync(id);if(!other?.isRegularItem?.()||other.deleted||other.id===item.id||normalize(other.getField('title'))!==normalize(item.getField('title')))continue;
+      for(const aid of other.getAttachments()){
+        const a=await Zotero.Items.getAsync(aid);if(!a||a.deleted||a.attachmentContentType!=='application/pdf'||this.isSupplement(a))continue;
+        try{const path=await a.getFilePathAsync();if(path&&await IOUtils.exists(path)){await this.pdfBytes(path);return {path,attachment:a};}}catch(_){}
+      }
+    }
+    return null;
+  },
   get codexRoot(){return PathUtils.join(Zotero.DataDirectory.dir,'storage','codex');},
   targetDirectory(value,mode){
     if(value===undefined||value===null)return this.codexRoot;
@@ -81,7 +95,7 @@ var ResearchNotebookLiterature={
   async linkedPDF(item,m,fetchPDF,targetDirectory=this.codexRoot){
     let validExistingPDF=false;
     for(const id of item.getAttachments()){
-      const child=await Zotero.Items.getAsync(id);if(child?.deleted||child?.attachmentContentType!=='application/pdf')continue;
+      const child=await Zotero.Items.getAsync(id);if(child?.deleted||child?.attachmentContentType!=='application/pdf'||this.isSupplement(child))continue;
       const path=await child.getFilePathAsync();if(!path||!await IOUtils.exists(path))continue;
       try{const bytes=await this.pdfBytes(path),digest=this.sha256(bytes);validExistingPDF=true;if(m.expected_sha256&&digest!==m.expected_sha256.toLowerCase())continue;return {attachment:child,path,pdfStatus:'existing',sha256:digest,location_exception:!this.within(path,this.codexRoot)};}catch(_){/* damaged attachment is retained */}
     }
@@ -278,7 +292,7 @@ var ResearchNotebookLiterature={
     }
     let attachment=null,path=null,pdfStatus=fetchPDF?'not_found':'not_requested',message='',acquisitionAttempts=[],digest='';
     for(const id of item.getAttachments()){
-      const a=await Zotero.Items.getAsync(id);if(a?.deleted||a?.attachmentContentType!=='application/pdf')continue;
+      const a=await Zotero.Items.getAsync(id);if(a?.deleted||a?.attachmentContentType!=='application/pdf'||this.isSupplement(a))continue;
       const file=await a.getFilePathAsync();if(file&&await IOUtils.exists(file)){
         try{await this.pdfBytes(file);attachment=a;path=file;pdfStatus='existing';break;}catch(error){Zotero.logError(error);}
       }
@@ -292,6 +306,10 @@ var ResearchNotebookLiterature={
       if(!local.toLowerCase().startsWith(boundary)||!local.toLowerCase().endsWith('.pdf')||!await IOUtils.exists(local))throw new Error('本地 PDF 不属于已关联文献目录');
       const magic=await IOUtils.read(local,{maxBytes:5});if(String.fromCharCode(...magic)!=='%PDF-')throw new Error('本地文件不是 PDF');
       attachment=await Zotero.Attachments.importFromFile({file:local,parentItemID:item.id,contentType:'application/pdf'});path=await attachment.getFilePathAsync();pdfStatus='copied';
+    }
+    if(!attachment&&fetchPDF){
+      const local=await this.otherLocalPDF(item);
+      if(local){attachment=await Zotero.Attachments.importFromFile({file:local.path,parentItemID:item.id,contentType:'application/pdf',title:'全文'});path=await attachment.getFilePathAsync();await this.pdfBytes(path);pdfStatus='copied';message='已复用库内相同 DOI 和题名的原文 PDF，并存入当前条目的 storage 附件。';}
     }
     if(!attachment&&fetchPDF){
       const result=await ResearchNotebookIntegrations.fetchPDF(item,m);

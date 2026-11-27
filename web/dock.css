@@ -58,3 +58,13 @@
 .dock-tabs{grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;padding:6px 12px 8px}
 .dock-tabs button{min-width:0;padding:8px 2px;font-size:12px}
 @media(max-width:300px){.dock-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.chat-message-heading .chat-fold{margin-left:auto;flex:none}
+.chat-message-heading .chat-fold + button{margin-left:0}
+.chat-message > [hidden]{display:none!important}
+
+.reading-humanities{margin:12px 0;padding:10px;border:1px solid #dce8e1;border-radius:10px}.reading-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}.reading-chapter{border-top:1px solid #e2ebe6;padding:8px 0}.reading-chapter>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:center;gap:8px}.reading-chapter>summary span{flex:1;min-width:120px}.reading-chapter .prose{padding:8px 0}
+.notes-filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 14px}.notes-filter-row>label{font-size:12px;color:#647c72}.notes-filter-row>select{flex:1;min-width:100px;max-width:100%;border:1px solid #cbded2;border-radius:6px;background:#fff;color:#254a42;padding:7px 9px;font:12px "Microsoft YaHei",sans-serif}.notes-filter-row>span{font-size:11px;white-space:nowrap}
+
+#library-assistant-slot{min-width:0}#chat-workspace.general-assistant .chat-permissions,#chat-workspace.general-assistant .chat-help,#chat-workspace.general-assistant .chat-suggestions{display:none}#chat-workspace.general-assistant .chat-heading h2{font-size:20px}#chat-workspace.general-assistant .chat-empty{padding:30px 0 24px;font-size:15px;color:#647c72}#manual-literature-tools{margin-top:24px;border-top:1px solid var(--dock-border);padding-top:12px}#manual-literature-tools>summary{cursor:pointer;color:#6b857a;font-size:12px}#manual-literature-tools h2{font-size:15px}#library-assistant-slot .chat-heading{align-items:flex-start;flex-wrap:wrap}#library-assistant-slot .chat-heading-actions{gap:4px;flex-wrap:wrap}
+.literature-mode-tabs{position:sticky;top:0;z-index:30;display:flex;gap:4px;margin:0 0 16px;padding:7px;background:#edf4f0;border:1px solid #dce8e1;border-radius:9px;box-shadow:0 4px 10px #244d3910}.literature-mode-tabs>button{flex:1;padding:9px 8px;border:0;border-radius:6px;background:transparent;color:#607b70;font:13px "Microsoft YaHei",sans-serif;cursor:pointer}.literature-mode-tabs>button[aria-selected=true]{background:#fff;color:#17634d;font-weight:600;box-shadow:0 1px 5px #173b2c12}#manual-literature-tools{margin-top:0;border-top:0;padding-top:0}#library-assistant-slot[hidden],#manual-literature-tools[hidden]{display:none!important}
